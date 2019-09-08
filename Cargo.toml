@@ -1,0 +1,22 @@
+[package]
+name = "b2_backup"
+version = "0.1.0"
+authors = ["Adam Reichold <adam.reichold@t-online.de>"]
+edition = "2018"
+
+[dependencies]
+attohttpc = { version = "0.5", default-features = false, features = ["json", "tls"] }
+base64 = "0.11"
+hex = "0.4"
+rayon = "1.2"
+rusqlite = { git = "https://github.com/jgallagher/rusqlite.git", features = ["bundled", "buildtime_bindgen", "session"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.8"
+sha1 = { version = "0.6", features = ["std"] }
+tempfile = "3.1"
+sodiumoxide = { git = "https://github.com/sodiumoxide/sodiumoxide.git" }
+zstd = { version = "0.5", default-features = false }
+
+[profile.release]
+opt-level = "s"
+lto = true
