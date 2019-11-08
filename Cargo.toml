@@ -2,6 +2,8 @@
 name = "b2_backup"
 version = "0.1.0"
 authors = ["Adam Reichold <adam.reichold@t-online.de>"]
+license = "GPL-3.0"
+repository = "https://github.com/adamreichold/b2_backup"
 edition = "2018"
 
 [dependencies]

@@ -1,3 +1,21 @@
+/*
+Copyright 2019 Adam Reichold
+
+This file is part of b2_backup.
+
+b2_backup is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+b2_backup is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with b2_backup.  If not, see <https://www.gnu.org/licenses/>.
+*/
 use std::io::Read;
 use std::mem::replace;
 
@@ -84,7 +102,7 @@ const WINDOW_SIZE: usize = 1 << WINDOW_BITS;
 const WINDOW_MASK: usize = WINDOW_SIZE - 1;
 
 const CHUNK_BITS: u32 = 15;
-pub const CHUNK_SIZE: u32 = 1 << CHUNK_BITS;
+const CHUNK_SIZE: u32 = 1 << CHUNK_BITS;
 const CHUNK_MASK: u32 = CHUNK_SIZE - 1;
 
 const CHAR_OFFSET: usize = 31;
