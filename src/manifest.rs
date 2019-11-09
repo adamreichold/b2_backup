@@ -16,21 +16,27 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with b2_backup.  If not, see <https://www.gnu.org/licenses/>.
 */
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::convert::{TryFrom, TryInto};
 use std::ffi::OsStr;
-use std::fs::{File, Metadata};
-use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
+use std::fs::{create_dir_all, File, Metadata, Permissions};
+use std::io::{copy, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::mem::replace;
-use std::os::unix::{ffi::OsStrExt, fs::MetadataExt};
+use std::os::unix::{
+    ffi::OsStrExt,
+    fs::{symlink as create_symlink, FileExt, MetadataExt, PermissionsExt},
+};
 use std::path::Path;
 use std::sync::Mutex;
 
+use lru_cache::LruCache;
 use rusqlite::{
     params,
     session::{Changegroup, ConflictAction, ConflictType, Session},
+    types::ValueRef,
     Connection, OptionalExtension, TransactionBehavior, NO_PARAMS,
 };
+use smallvec::SmallVec;
 use sodiumoxide::crypto::hash::sha256::{hash, DIGESTBYTES};
 use tempfile::tempfile;
 
@@ -65,8 +71,6 @@ CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY,
     path BLOB NOT NULL UNIQUE,
     size INTEGER NOT NULL,
-    uid INTEGER NOT NULL,
-    gid INTEGER NOT NULL,
     mode INTEGER NOT NULL,
     symlink BLOB
 );
@@ -269,7 +273,6 @@ ORDER BY MAX(blocks.archive_id) DESC
         )?;
 
         let mut rows = stmt.query(params![path_filter])?;
-
         while let Some(row) = rows.next()? {
             let size: i64 = row.get(0)?;
             let blocks: i64 = row.get(1)?;
@@ -283,6 +286,101 @@ ORDER BY MAX(blocks.archive_id) DESC
                 archives,
                 path.display()
             );
+        }
+
+        Ok(())
+    }
+
+    pub fn restore_files(
+        &mut self,
+        config: &Config,
+        client: &Client,
+        path_filter: Option<&str>,
+        target: &Path,
+    ) -> Fallible {
+        let mut archives = LruCache::<i64, File>::new(config.archive_cache_cap);
+
+        let trans = self.conn.transaction()?;
+
+        let mut select_files = trans.prepare(
+            "SELECT id, path, size, mode, symlink FROM files WHERE IFNULL(path GLOB ?, TRUE)",
+        )?;
+        let mut select_blocks = trans.prepare("SELECT blocks.archive_id, blocks.digest, mappings.offset FROM mappings, blocks WHERE mappings.block_id = blocks.id AND mappings.file_id = ?")?;
+
+        let mut files = select_files.query(params![path_filter])?;
+        while let Some(file) = files.next()? {
+            let file_id: i64 = file.get(0)?;
+            let path = Path::new(OsStr::from_bytes(file.get_raw(1).as_blob()?));
+            let size = file.get_raw(2).as_i64()? as u64;
+            let mode: u32 = file.get(3)?;
+            let symlink = match file.get_raw(4) {
+                ValueRef::Null => None,
+                value => Some(Path::new(OsStr::from_bytes(value.as_blob()?))),
+            };
+
+            println!("Restoring {}...", path.display());
+
+            let path = target.join(path.strip_prefix("/")?);
+
+            if let Some(parent) = path.parent() {
+                create_dir_all(parent)?;
+            }
+
+            if let Some(symlink) = symlink {
+                create_symlink(symlink, path)?;
+
+                continue;
+            }
+
+            let file = File::create(path)?;
+            file.set_len(size)?;
+
+            let mut mappings =
+                HashMap::<i64, HashMap<[u8; DIGESTBYTES], SmallVec<[u64; 2]>>>::new();
+
+            let mut blocks = select_blocks.query(params![file_id])?;
+            while let Some(block) = blocks.next()? {
+                let archive_id: i64 = block.get(0)?;
+                let digest = <[u8; DIGESTBYTES]>::try_from(block.get_raw(1).as_blob()?)?;
+                let offset = block.get_raw(2).as_i64()? as u64;
+
+                mappings
+                    .entry(archive_id)
+                    .or_default()
+                    .entry(digest)
+                    .or_default()
+                    .push(offset);
+            }
+
+            for (archive_id, mappings) in &mappings {
+                let archive = match archives.get_mut(archive_id) {
+                    Some(archive) => archive,
+                    None => {
+                        let name = format!("archive_{}", archive_id);
+                        let mut archive = client.download(&name)?;
+
+                        let mut temp = tempfile()?;
+                        copy(&mut archive, &mut temp)?;
+
+                        archives.insert(*archive_id, temp);
+                        archives.get_mut(archive_id).unwrap()
+                    }
+                };
+
+                archive.seek(SeekFrom::Start(0))?;
+
+                Archive::read(archive, |digest, block| {
+                    if let Some(offsets) = mappings.get(digest) {
+                        for offset in offsets {
+                            file.write_all_at(block, *offset)?;
+                        }
+                    }
+
+                    Ok(())
+                })?;
+            }
+
+            file.set_permissions(Permissions::from_mode(mode))?;
         }
 
         Ok(())
@@ -580,15 +678,12 @@ fn insert_file(
     metadata: &Metadata,
     symlink: Option<&[u8]>,
 ) -> Fallible<i64> {
-    let mut stmt = conn.prepare_cached(
-        "INSERT INTO files (path, size, uid, gid, mode, symlink) VALUES (?, ?, ?, ?, ?, ?)",
-    )?;
+    let mut stmt =
+        conn.prepare_cached("INSERT INTO files (path, size, mode, symlink) VALUES (?, ?, ?, ?)")?;
 
     stmt.execute(params![
         path,
         metadata.size() as i64,
-        metadata.uid(),
-        metadata.gid(),
         metadata.mode(),
         symlink,
     ])?;
@@ -605,14 +700,11 @@ fn update_file(
     metadata: &Metadata,
     symlink: Option<&[u8]>,
 ) -> Fallible {
-    let mut stmt = conn.prepare_cached(
-        "UPDATE files SET size = ?, uid = ?, gid = ?, mode = ?, symlink = ? WHERE id = ?",
-    )?;
+    let mut stmt =
+        conn.prepare_cached("UPDATE files SET size = ?, mode = ?, symlink = ? WHERE id = ?")?;
 
     stmt.execute(params![
         metadata.size() as i64,
-        metadata.uid(),
-        metadata.gid(),
         metadata.mode(),
         symlink,
         file_id

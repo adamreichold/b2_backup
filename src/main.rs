@@ -22,7 +22,7 @@ mod manifest;
 mod pack;
 mod split;
 
-use std::env::args;
+use std::env::{args, current_dir};
 use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::fs::File;
@@ -69,6 +69,15 @@ fn main() -> Fallible {
         Some("collect-small-patchsets") => manifest.collect_small_patchsets(&config, &client),
         Some("restore-manifest") => manifest.restore(&client),
         Some("list-files") => manifest.list_files(args.next().as_ref().map(String::as_str)),
+        Some("restore-files") => manifest.restore_files(
+            &config,
+            &client,
+            args.next().as_ref().map(String::as_str),
+            &args
+                .next()
+                .map(|arg| Ok(arg.into()))
+                .unwrap_or_else(current_dir)?,
+        ),
         Some(arg) => Err(format!("Unexpected argument {}", arg).into()),
     }
 }
@@ -89,6 +98,8 @@ pub struct Config {
     min_archive_len: u64,
     #[serde(default = "Config::def_max_manifest_len")]
     max_manifest_len: u64,
+    #[serde(default = "Config::def_archive_cache_cap")]
+    archive_cache_cap: usize,
 }
 
 impl Config {
@@ -112,6 +123,10 @@ impl Config {
 
     fn def_max_manifest_len() -> u64 {
         10_000_000
+    }
+
+    fn def_archive_cache_cap() -> usize {
+        20
     }
 }
 
