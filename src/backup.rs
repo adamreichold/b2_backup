@@ -28,7 +28,7 @@ use super::{
     client::Client,
     manifest::{add_block, add_file, Update},
     split::split,
-    Fallible,
+    Config, Fallible,
 };
 
 macro_rules! try_not_found {
@@ -42,6 +42,7 @@ macro_rules! try_not_found {
 }
 
 pub fn backup(
+    config: &Config,
     client: &Client,
     update: &Mutex<Update<'_>>,
     excludes: &[PathBuf],
@@ -60,9 +61,9 @@ pub fn backup(
     let file_type = metadata.file_type();
 
     if file_type.is_dir() {
-        backup_dir(client, update, excludes, &path)?;
+        backup_dir(config, client, update, excludes, &path)?;
     } else if file_type.is_file() {
-        backup_file(client, update, &path, &metadata)?;
+        backup_file(config, client, update, &path, &metadata)?;
     } else if file_type.is_symlink() {
         backup_symlink(update, &path, &metadata)?;
     } else {
@@ -76,6 +77,7 @@ pub fn backup(
 }
 
 fn backup_dir(
+    config: &Config,
     client: &Client,
     update: &Mutex<Update<'_>>,
     excludes: &[PathBuf],
@@ -89,10 +91,11 @@ fn backup_dir(
 
     paths
         .par_iter()
-        .try_for_each(|path| backup(client, update, excludes, &path))
+        .try_for_each(|path| backup(config, client, update, excludes, &path))
 }
 
 fn backup_file(
+    config: &Config,
     client: &Client,
     update: &Mutex<Update<'_>>,
     path: &Path,
@@ -105,7 +108,7 @@ fn backup_file(
     let mut offset = 0;
 
     split(file, |block| {
-        add_block(update, client, file_id, offset, block)?;
+        add_block(update, config, client, file_id, offset, block)?;
 
         offset += u64::try_from(block.len()).unwrap();
 

@@ -25,8 +25,8 @@ use zstd::{encode_all, Decoder};
 
 use super::Fallible;
 
-pub fn pack(key: &Key, reader: impl Read) -> Fallible<Vec<u8>> {
-    let mut buf = encode_all(reader, 17)?;
+pub fn pack(key: &Key, compression_level: i32, reader: impl Read) -> Fallible<Vec<u8>> {
+    let mut buf = encode_all(reader, compression_level)?;
 
     let nonce = gen_nonce();
     let tag = seal_detached(&mut buf, &nonce, key);

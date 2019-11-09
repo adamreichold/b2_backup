@@ -29,7 +29,10 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use hex::decode_to_slice;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::{
+    iter::{IntoParallelRefIterator, ParallelIterator},
+    ThreadPoolBuilder,
+};
 use serde::Deserialize;
 use serde_yaml::from_reader;
 use sodiumoxide::crypto::secretbox::{Key, KEYBYTES};
@@ -45,6 +48,12 @@ fn main() -> Fallible {
 
     let config = Config::read("config.yaml")?;
 
+    if let Some(num_threads) = config.num_threads {
+        ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build_global()?;
+    }
+
     let client = Client::new(&config)?;
 
     let mut args = args();
@@ -54,10 +63,10 @@ fn main() -> Fallible {
             config
                 .includes
                 .par_iter()
-                .try_for_each(|path| backup(&client, update, &config.excludes, path))
+                .try_for_each(|path| backup(&config, &client, update, &config.excludes, path))
         }),
-        Some("collect-small-archives") => manifest.collect_small_archives(&client),
-        Some("collect-small-patchsets") => manifest.collect_small_patchsets(&client),
+        Some("collect-small-archives") => manifest.collect_small_archives(&config, &client),
+        Some("collect-small-patchsets") => manifest.collect_small_patchsets(&config, &client),
         Some("restore-manifest") => manifest.restore(&client),
         Some("list-files") => manifest.list_files(args.next().as_ref().map(String::as_str)),
         Some(arg) => Err(format!("Unexpected argument {}", arg).into()),
@@ -73,6 +82,13 @@ pub struct Config {
     key: String,
     includes: Vec<PathBuf>,
     excludes: Vec<PathBuf>,
+    num_threads: Option<usize>,
+    #[serde(default = "Config::def_compression_level")]
+    compression_level: i32,
+    #[serde(default = "Config::def_min_archive_len")]
+    min_archive_len: u64,
+    #[serde(default = "Config::def_max_manifest_len")]
+    max_manifest_len: u64,
 }
 
 impl Config {
@@ -84,6 +100,18 @@ impl Config {
         let mut key = [0; KEYBYTES];
         decode_to_slice(&self.key, &mut key)?;
         Ok(Key(key))
+    }
+
+    fn def_compression_level() -> i32 {
+        17
+    }
+
+    fn def_min_archive_len() -> u64 {
+        50_000_000
+    }
+
+    fn def_max_manifest_len() -> u64 {
+        10_000_000
     }
 }
 

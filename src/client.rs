@@ -193,7 +193,7 @@ impl<'a> Client<'a> {
     }
 
     pub fn upload(&self, name: &str, reader: impl Read) -> Fallible<(String, u64)> {
-        let buf = pack(&self.key, reader)?;
+        let buf = pack(&self.key, self.config.compression_level, reader)?;
 
         let thread_id = current().id();
 

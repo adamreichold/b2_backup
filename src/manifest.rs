@@ -34,7 +34,7 @@ use rusqlite::{
 use sodiumoxide::crypto::hash::sha256::{hash, DIGESTBYTES};
 use tempfile::tempfile;
 
-use super::{client::Client, Bytes, Fallible};
+use super::{client::Client, Bytes, Config, Fallible};
 
 pub struct Manifest {
     conn: Connection,
@@ -161,18 +161,21 @@ COMMIT;
         Ok(())
     }
 
-    pub fn collect_small_archives(&mut self, client: &Client) -> Fallible {
+    pub fn collect_small_archives(&mut self, config: &Config, client: &Client) -> Fallible {
         self.update(true, client, |update| {
-            update.lock().unwrap().collect_small_archives(client)
+            update
+                .lock()
+                .unwrap()
+                .collect_small_archives(config, client)
         })
     }
 
-    pub fn collect_small_patchsets(&mut self, client: &Client) -> Fallible {
+    pub fn collect_small_patchsets(&mut self, config: &Config, client: &Client) -> Fallible {
         let trans = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Exclusive)?;
 
-        let small_patchsets = select_small_patchsets(&trans)?;
+        let small_patchsets = select_small_patchsets(&trans, config.max_manifest_len)?;
 
         if small_patchsets.len() <= 1 {
             return Err("Not enough small patchsets".into());
@@ -317,6 +320,7 @@ pub fn add_file(
 
 pub fn add_block(
     self_: &Mutex<Update>,
+    config: &Config,
     client: &Client,
     file_id: i64,
     offset: u64,
@@ -343,7 +347,7 @@ pub fn add_block(
         self_.archive.add_block(digest.as_ref(), block)?;
 
         archive_len = self_.archive.len()?;
-        if archive_len < Archive::MIN_LEN {
+        if archive_len < config.min_archive_len {
             return Ok(());
         }
 
@@ -361,8 +365,8 @@ pub fn add_block(
 }
 
 impl Update<'_> {
-    fn collect_small_archives(&mut self, client: &Client) -> Fallible {
-        let small_archives = select_small_archives(self.conn)?;
+    fn collect_small_archives(&mut self, config: &Config, client: &Client) -> Fallible {
+        let small_archives = select_small_archives(self.conn, config.min_archive_len)?;
 
         if small_archives.len() <= 1 {
             return Err("Not enough small archives".into());
@@ -391,7 +395,7 @@ impl Update<'_> {
 
             println!("Updated {} out of {} blocks", updated_blocks, blocks);
 
-            if self.archive.len()? >= Archive::MIN_LEN {
+            if self.archive.len()? >= config.min_archive_len {
                 break;
             }
         }
@@ -470,8 +474,6 @@ impl Archive {
 
         Ok(len)
     }
-
-    const MIN_LEN: u64 = 50_000_000;
 
     fn upload(&mut self, client: &Client) -> Fallible<(String, u64)> {
         let name = format!("archive_{}", self.id);
@@ -718,7 +720,10 @@ fn delete_unused_archives(
     Ok(unused_archives)
 }
 
-fn select_small_patchsets(conn: &Connection) -> Fallible<Vec<(i64, String)>> {
+fn select_small_patchsets(
+    conn: &Connection,
+    max_manifest_len: u64,
+) -> Fallible<Vec<(i64, String)>> {
     let mut stmt = conn.prepare(
         r#"
 SELECT
@@ -736,13 +741,15 @@ ORDER BY ids.id DESC
     )?;
 
     let small_patchsets = stmt
-        .query_map(params![10_000_000], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .query_map(params![max_manifest_len as i64], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(small_patchsets)
 }
 
-fn select_small_archives(conn: &Connection) -> Fallible<Vec<i64>> {
+fn select_small_archives(conn: &Connection, min_archive_len: u64) -> Fallible<Vec<i64>> {
     let mut stmt = conn.prepare(
         r#"
 SELECT
@@ -756,7 +763,7 @@ ORDER BY COUNT(blocks.id) ASC, archives.length DESC
     )?;
 
     let small_archives = stmt
-        .query_map(params![Archive::MIN_LEN as i64], |row| row.get(0))?
+        .query_map(params![min_archive_len as i64], |row| row.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(small_archives)
