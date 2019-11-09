@@ -18,6 +18,7 @@ along with b2_backup.  If not, see <https://www.gnu.org/licenses/>.
 */
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
+use std::ffi::OsStr;
 use std::fs::{File, Metadata};
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::mem::replace;
@@ -33,7 +34,7 @@ use rusqlite::{
 use sodiumoxide::crypto::hash::sha256::{hash, DIGESTBYTES};
 use tempfile::tempfile;
 
-use super::{client::Client, Fallible};
+use super::{client::Client, Bytes, Fallible};
 
 pub struct Manifest {
     conn: Connection,
@@ -243,6 +244,43 @@ DELETE FROM patchsets;
         }
 
         trans.commit()?;
+
+        Ok(())
+    }
+
+    pub fn list_files(&self, path_filter: Option<&str>) -> Fallible {
+        let mut stmt = self.conn.prepare(
+            r#"
+SELECT
+    files.size,
+    COUNT(DISTINCT blocks.id),
+    COUNT(DISTINCT blocks.archive_id),
+    files.path
+FROM files, mappings, blocks
+WHERE files.id = mappings.file_id
+AND mappings.block_id = blocks.id
+AND IFNULL(files.path GLOB ?, TRUE)
+GROUP BY files.id
+ORDER BY MAX(blocks.archive_id) DESC
+"#,
+        )?;
+
+        let mut rows = stmt.query(params![path_filter])?;
+
+        while let Some(row) = rows.next()? {
+            let size: i64 = row.get(0)?;
+            let blocks: i64 = row.get(1)?;
+            let archives: i64 = row.get(2)?;
+            let path = Path::new(OsStr::from_bytes(row.get_raw(3).as_blob()?));
+
+            println!(
+                "{:>11} {:>8} {:>8} {}",
+                Bytes(size as _).to_string(),
+                blocks,
+                archives,
+                path.display()
+            );
+        }
 
         Ok(())
     }

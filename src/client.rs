@@ -31,7 +31,7 @@ use sodiumoxide::crypto::secretbox::Key;
 
 use super::{
     pack::{pack, unpack},
-    Config, Fallible,
+    Bytes, Config, Fallible,
 };
 
 pub struct Client<'a> {
@@ -275,7 +275,7 @@ struct Uploader {
 
 impl Uploader {
     fn upload(&self, name: &str, buf: &[u8]) -> Fallible<String> {
-        println!("Uploading {} kB to {}...", buf.len() / 1024, name);
+        println!("Uploading {} to {}...", Bytes(buf.len() as _), name);
 
         let resp = post(&self.url)
             .header("Authorization", &self.token)

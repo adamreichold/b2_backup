@@ -24,6 +24,7 @@ mod split;
 
 use std::env::args;
 use std::error::Error;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
@@ -46,7 +47,9 @@ fn main() -> Fallible {
 
     let client = Client::new(&config)?;
 
-    match args().nth(1).as_ref().map(|arg| arg.as_str()) {
+    let mut args = args();
+
+    match args.nth(1).as_ref().map(String::as_str) {
         None | Some("backup") => manifest.update(false, &client, |update| {
             config
                 .includes
@@ -56,6 +59,7 @@ fn main() -> Fallible {
         Some("collect-small-archives") => manifest.collect_small_archives(&client),
         Some("collect-small-patchsets") => manifest.collect_small_patchsets(&client),
         Some("restore-manifest") => manifest.restore(&client),
+        Some("list-files") => manifest.list_files(args.next().as_ref().map(String::as_str)),
         Some(arg) => Err(format!("Unexpected argument {}", arg).into()),
     }
 }
@@ -80,5 +84,25 @@ impl Config {
         let mut key = [0; KEYBYTES];
         decode_to_slice(&self.key, &mut key)?;
         Ok(Key(key))
+    }
+}
+
+struct Bytes(f64);
+
+impl Display for Bytes {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> FmtResult {
+        let mut factor = self.0;
+        let mut unit = "B";
+
+        for next_unit in &["kB", "MB", "GB", "TB"] {
+            if factor < 1024.0 {
+                break;
+            }
+
+            factor /= 1024.0;
+            unit = next_unit;
+        }
+
+        write!(fmt, "{:.1} {}", factor, unit)
     }
 }
