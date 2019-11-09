@@ -33,7 +33,7 @@ use serde::Deserialize;
 use serde_yaml::from_reader;
 use sodiumoxide::crypto::secretbox::{Key, KEYBYTES};
 
-use self::{backup::backup_path, client::Client, manifest::Manifest};
+use self::{backup::backup, client::Client, manifest::Manifest};
 
 type Fallible<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -51,7 +51,7 @@ fn main() -> Fallible {
             config
                 .includes
                 .par_iter()
-                .try_for_each(|path| backup_path(&client, update, &config.excludes, path))
+                .try_for_each(|path| backup(&client, update, &config.excludes, path))
         }),
         Some("collect-small-archives") => manifest.collect_small_archives(&client),
         Some("collect-small-patchsets") => manifest.collect_small_patchsets(&client),

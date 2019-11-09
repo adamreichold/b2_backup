@@ -41,7 +41,7 @@ macro_rules! try_not_found {
     };
 }
 
-pub fn backup_path(
+pub fn backup(
     client: &Client,
     update: &Mutex<Update<'_>>,
     excludes: &[PathBuf],
@@ -84,16 +84,12 @@ fn backup_dir(
     let dir = try_not_found!(path.read_dir());
 
     let paths = dir
-        .filter_map(|entry| match entry {
-            Ok(entry) => Some(Ok(entry.path())),
-            Err(err) if err.kind() == ErrorKind::NotFound => None,
-            Err(err) => Some(Err(err)),
-        })
+        .map(|entry| entry.map(|entry| entry.path()))
         .collect::<Result<Vec<_>, _>>()?;
 
     paths
         .par_iter()
-        .try_for_each(|path| backup_path(client, update, excludes, &path))
+        .try_for_each(|path| backup(client, update, excludes, &path))
 }
 
 fn backup_file(
