@@ -27,8 +27,10 @@ use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use hex::decode_to_slice;
+use libc::{c_int, sighandler_t, signal, SIGINT, SIG_ERR};
 use rayon::{
     iter::{IntoParallelRefIterator, ParallelIterator},
     ThreadPoolBuilder,
@@ -42,6 +44,12 @@ use self::{backup::backup, client::Client, manifest::Manifest};
 type Fallible<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 
 fn main() -> Fallible {
+    unsafe {
+        if signal(SIGINT, interrupt as extern "C" fn(c_int) as sighandler_t) == SIG_ERR {
+            return Err("Failed to install signal handler".into());
+        }
+    }
+
     sodiumoxide::init().map_err(|()| "Failed to initialize libsodium")?;
 
     let mut manifest = Manifest::open("manifest.db")?;
@@ -59,7 +67,7 @@ fn main() -> Fallible {
     let mut args = args();
 
     match args.nth(1).as_ref().map(String::as_str) {
-        None | Some("backup") => manifest.update(false, &client, |update| {
+        None | Some("backup") => manifest.update(config.keep_deleted_files, &client, |update| {
             config
                 .includes
                 .par_iter()
@@ -82,6 +90,16 @@ fn main() -> Fallible {
     }
 }
 
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn interrupt(_signum: c_int) {
+    INTERRUPTED.store(true, Ordering::SeqCst);
+}
+
+fn was_interrupted() -> bool {
+    INTERRUPTED.load(Ordering::SeqCst)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Config {
     app_key_id: String,
@@ -91,6 +109,8 @@ pub struct Config {
     key: String,
     includes: Vec<PathBuf>,
     excludes: Vec<PathBuf>,
+    #[serde(default = "Config::def_keep_deleted_files")]
+    keep_deleted_files: bool,
     num_threads: Option<usize>,
     #[serde(default = "Config::def_compression_level")]
     compression_level: i32,
@@ -111,6 +131,10 @@ impl Config {
         let mut key = [0; KEYBYTES];
         decode_to_slice(&self.key, &mut key)?;
         Ok(Key(key))
+    }
+
+    fn def_keep_deleted_files() -> bool {
+        false
     }
 
     fn def_compression_level() -> i32 {

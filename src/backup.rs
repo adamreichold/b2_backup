@@ -26,9 +26,9 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use super::{
     client::Client,
-    manifest::{add_block, add_file, Update},
+    manifest::{store_block, Update},
     split::split,
-    Config, Fallible,
+    was_interrupted, Config, Fallible,
 };
 
 macro_rules! try_not_found {
@@ -48,6 +48,10 @@ pub fn backup(
     excludes: &[PathBuf],
     path: &Path,
 ) -> Fallible {
+    if was_interrupted() {
+        return Ok(());
+    }
+
     if let Some(exclude) = excludes.iter().find(|exclude| path.starts_with(exclude)) {
         println!(
             "Skipping {} due to exclude {}",
@@ -103,23 +107,29 @@ fn backup_file(
 ) -> Fallible {
     let file = try_not_found!(File::open(path));
 
-    let file_id = add_file(update, path, &metadata, None)?;
+    let new_file_id = update.lock().unwrap().open_file(path, &metadata, None)?;
 
     let mut offset = 0;
 
     split(file, |block| {
-        add_block(update, config, client, file_id, offset, block)?;
+        store_block(update, config, client, new_file_id, offset, block)?;
 
         offset += u64::try_from(block.len()).unwrap();
 
         Ok(())
-    })
+    })?;
+
+    update.lock().unwrap().close_file(new_file_id)?;
+
+    Ok(())
 }
 
 fn backup_symlink(update: &Mutex<Update<'_>>, path: &Path, metadata: &Metadata) -> Fallible {
     let symlink = try_not_found!(path.read_link());
 
-    add_file(update, path, &metadata, Some(&symlink))?;
+    let update = update.lock().unwrap();
+    let new_file_id = update.open_file(path, &metadata, Some(&symlink))?;
+    update.close_file(new_file_id)?;
 
     Ok(())
 }

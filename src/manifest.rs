@@ -40,7 +40,7 @@ use smallvec::SmallVec;
 use sodiumoxide::crypto::hash::sha256::{hash, DIGESTBYTES};
 use tempfile::tempfile;
 
-use super::{client::Client, Bytes, Config, Fallible};
+use super::{client::Client, was_interrupted, Bytes, Config, Fallible};
 
 pub struct Manifest {
     conn: Connection,
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE TABLE IF NOT EXISTS blocks (
     id INTEGER PRIMARY KEY,
     digest BLOB NOT NULL UNIQUE,
-    archive_id INTEGER NOT NULL REFERENCES archives (id)
+    archive_id INTEGER NOT NULL REFERENCES archives (id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS mappings (
@@ -92,6 +92,23 @@ WITHOUT ROWID;
 CREATE TEMPORARY TABLE visited_files (
     file_id INTEGER PIMARY KEY
 );
+
+CREATE TEMPORARY TABLE new_files (
+    id INTEGER PRIMARY KEY,
+    path BLOB NOT NULL UNIQUE,
+    size INTEGER NOT NULL,
+    mode INTEGER NOT NULL,
+    symlink BLOB,
+    closed INTEGER NOT NULL DEFAULT FALSE
+);
+
+CREATE TEMPORARY TABLE new_mappings (
+    new_file_id INTEGER NOT NULL REFERENCES new_files (id) ON DELETE CASCADE,
+    offset INTEGER NOT NULL,
+    block_id INTEGER NOT NULL,
+    PRIMARY KEY (new_file_id, offset)
+)
+WITHOUT ROWID;
 
 COMMIT;
 "#,
@@ -131,26 +148,30 @@ COMMIT;
 
             producer(&update)?;
 
+            let was_interrupted = was_interrupted();
+
             let mut archive = update.into_inner().unwrap().archive;
 
             let archive_len = archive.len()?;
-            if archive_len != 0 {
+            if !was_interrupted && archive_len != 0 {
                 let (b2_file_id, b2_length) = archive.upload(client)?;
 
                 update_archive(&trans, archive.id, archive_len, &b2_file_id, b2_length)?;
-            } else if archive_id == archive.id {
-                delete_archive(&trans, archive_id)?;
+                collect_closed_new_files(&trans)?;
+            } else if was_interrupted || archive_id == archive.id {
+                delete_archive(&trans, archive.id)?;
             }
 
-            unused_archives = delete_unused_archives(&trans, keep_unvisited_files)?;
+            unused_archives =
+                delete_unused_archives(&trans, was_interrupted || keep_unvisited_files)?;
 
             patchset = Vec::new();
             session.patchset_strm(&mut patchset)?;
+        }
 
-            if patchset.is_empty() {
-                println!("No changes recorded");
-                return Ok(());
-            }
+        if patchset.is_empty() {
+            println!("No changes recorded");
+            return Ok(());
         }
 
         upload_patchset(&trans, client, &patchset)?;
@@ -381,6 +402,10 @@ ORDER BY MAX(blocks.archive_id) DESC
             }
 
             file.set_permissions(Permissions::from_mode(mode))?;
+
+            if was_interrupted() {
+                break;
+            }
         }
 
         Ok(())
@@ -394,33 +419,29 @@ pub struct Update<'a> {
 
 unsafe impl Send for Update<'_> {}
 
-pub fn add_file(
-    self_: &Mutex<Update>,
-    path: &Path,
-    metadata: &Metadata,
-    symlink: Option<&Path>,
-) -> Fallible<i64> {
-    let path = path.as_os_str().as_bytes();
-    let symlink = symlink.map(|symlink| symlink.as_os_str().as_bytes());
+impl Update<'_> {
+    pub fn open_file(
+        &self,
+        path: &Path,
+        metadata: &Metadata,
+        symlink: Option<&Path>,
+    ) -> Fallible<i64> {
+        let path = path.as_os_str().as_bytes();
+        let symlink = symlink.map(|symlink| symlink.as_os_str().as_bytes());
 
-    let self_ = self_.lock().unwrap();
-
-    let file_id = select_file(self_.conn, path)?;
-
-    if let Some(file_id) = file_id {
-        update_file(self_.conn, file_id, metadata, symlink)?;
-
-        return Ok(file_id);
+        insert_new_file(self.conn, path, metadata, symlink)
     }
 
-    insert_file(self_.conn, path, metadata, symlink)
+    pub fn close_file(&self, new_file_id: i64) -> Fallible {
+        update_new_file(self.conn, new_file_id)
+    }
 }
 
-pub fn add_block(
+pub fn store_block(
     self_: &Mutex<Update>,
     config: &Config,
     client: &Client,
-    file_id: i64,
+    new_file_id: i64,
     offset: u64,
     block: &[u8],
 ) -> Fallible {
@@ -435,14 +456,14 @@ pub fn add_block(
         let block_id = select_block(self_.conn, digest.as_ref())?;
 
         if let Some(block_id) = block_id {
-            return insert_mapping(self_.conn, file_id, offset, block_id);
+            return insert_new_mapping(self_.conn, new_file_id, offset, block_id);
         }
 
         let block_id = insert_block(self_.conn, digest.as_ref(), self_.archive.id)?;
 
-        insert_mapping(self_.conn, file_id, offset, block_id)?;
+        insert_new_mapping(self_.conn, new_file_id, offset, block_id)?;
 
-        self_.archive.add_block(digest.as_ref(), block)?;
+        self_.archive.store_block(digest.as_ref(), block)?;
 
         archive_len = self_.archive.len()?;
         if archive_len < config.min_archive_len {
@@ -458,6 +479,49 @@ pub fn add_block(
     let self_ = self_.lock().unwrap();
 
     update_archive(self_.conn, archive.id, archive_len, &b2_file_id, b2_length)?;
+    collect_closed_new_files(self_.conn)?;
+
+    Ok(())
+}
+
+fn collect_closed_new_files(conn: &Connection) -> Fallible {
+    let mut stmt = conn.prepare(
+        r#"
+SELECT
+    new_files.id,
+    new_files.path
+FROM new_files
+WHERE new_files.closed
+AND NOT EXISTS (
+    SELECT archives.id
+    FROM new_mappings, blocks, archives
+    WHERE new_files.id = new_mappings.new_file_id
+    AND new_mappings.block_id = blocks.id
+    AND blocks.archive_id = archives.id
+    AND archives.b2_file_id IS NULL
+)
+"#,
+    )?;
+
+    let mut rows = stmt.query(NO_PARAMS)?;
+    while let Some(row) = rows.next()? {
+        let new_file_id: i64 = row.get(0)?;
+        let path = row.get_raw(1).as_blob()?;
+
+        let file_id = if let Some(file_id) = select_file(conn, path)? {
+            update_file(conn, file_id, new_file_id)?;
+            delete_mappings(conn, file_id)?;
+
+            file_id
+        } else {
+            insert_file(conn, new_file_id)?
+        };
+
+        insert_mappings(conn, file_id, new_file_id)?;
+        insert_visited_file(conn, file_id)?;
+
+        delete_new_file(conn, new_file_id)?;
+    }
 
     Ok(())
 }
@@ -479,7 +543,7 @@ impl Update<'_> {
 
             Archive::read(archive, |digest, block| {
                 if let Some(block_id) = select_block(self.conn, digest)? {
-                    self.archive.add_block(digest, block)?;
+                    self.archive.store_block(digest, block)?;
 
                     update_block(self.conn, block_id, self.archive.id)?;
 
@@ -557,7 +621,7 @@ impl Archive {
         })
     }
 
-    fn add_block(&mut self, digest: &[u8], block: &[u8]) -> Fallible {
+    fn store_block(&mut self, digest: &[u8], block: &[u8]) -> Fallible {
         let block_len = u32::try_from(block.len()).unwrap().to_be_bytes();
 
         self.blocks.write_all(digest)?;
@@ -672,47 +736,34 @@ fn select_file(conn: &Connection, path: &[u8]) -> Fallible<Option<i64>> {
     Ok(file_id)
 }
 
-fn insert_file(
-    conn: &Connection,
-    path: &[u8],
-    metadata: &Metadata,
-    symlink: Option<&[u8]>,
-) -> Fallible<i64> {
+fn insert_file(conn: &Connection, new_file_id: i64) -> Fallible<i64> {
     let mut stmt =
-        conn.prepare_cached("INSERT INTO files (path, size, mode, symlink) VALUES (?, ?, ?, ?)")?;
+            conn.prepare_cached("INSERT INTO files (path, size, mode, symlink) SELECT path, size, mode, symlink FROM new_files WHERE id = ?")?;
 
-    stmt.execute(params![
-        path,
-        metadata.size() as i64,
-        metadata.mode(),
-        symlink,
-    ])?;
+    stmt.execute(params![new_file_id])?;
     let file_id = conn.last_insert_rowid();
-
-    insert_visited_file(conn, file_id)?;
 
     Ok(file_id)
 }
 
-fn update_file(
-    conn: &Connection,
-    file_id: i64,
-    metadata: &Metadata,
-    symlink: Option<&[u8]>,
-) -> Fallible {
-    let mut stmt =
-        conn.prepare_cached("UPDATE files SET size = ?, mode = ?, symlink = ? WHERE id = ?")?;
+fn update_file(conn: &Connection, file_id: i64, new_file_id: i64) -> Fallible {
+    let mut stmt = conn.prepare_cached(
+        r#"
+WITH new_file AS (
+    SELECT size, mode, symlink
+    FROM new_files
+    WHERE id = ?
+)
+UPDATE files
+SET
+    size = (SELECT size FROM new_file),
+    mode = (SELECT mode FROM new_file),
+    symlink = (SELECT symlink FROM new_file)
+WHERE id = ?
+"#,
+    )?;
 
-    stmt.execute(params![
-        metadata.size() as i64,
-        metadata.mode(),
-        symlink,
-        file_id
-    ])?;
-
-    insert_visited_file(conn, file_id)?;
-
-    delete_mappings(conn, file_id)?;
+    stmt.execute(params![new_file_id, file_id])?;
 
     Ok(())
 }
@@ -744,11 +795,10 @@ fn update_block(conn: &Connection, block_id: i64, archive_id: i64) -> Fallible {
     Ok(())
 }
 
-fn insert_mapping(conn: &Connection, file_id: i64, offset: u64, block_id: i64) -> Fallible {
-    let mut stmt =
-        conn.prepare_cached("INSERT INTO mappings (file_id, offset, block_id) VALUES (?, ?, ?)")?;
+fn insert_mappings(conn: &Connection, file_id: i64, new_file_id: i64) -> Fallible {
+    let mut stmt = conn.prepare_cached("INSERT INTO mappings (file_id, offset, block_id) SELECT ?, offset, block_id FROM new_mappings WHERE new_file_id = ?")?;
 
-    stmt.execute(params![file_id, offset as i64, block_id])?;
+    stmt.execute(params![file_id, new_file_id])?;
 
     Ok(())
 }
@@ -771,6 +821,52 @@ fn insert_visited_file(conn: &Connection, file_id: i64) -> Fallible {
 
 fn delete_visited_files(conn: &Connection) -> Fallible {
     conn.execute("DELETE FROM visited_files", NO_PARAMS)?;
+
+    Ok(())
+}
+
+fn insert_new_file(
+    conn: &Connection,
+    path: &[u8],
+    metadata: &Metadata,
+    symlink: Option<&[u8]>,
+) -> Fallible<i64> {
+    let mut stmt = conn
+        .prepare_cached("INSERT INTO new_files (path, size, mode, symlink) VALUES (?, ?, ?, ?)")?;
+
+    stmt.execute(params![
+        path,
+        metadata.size() as i64,
+        metadata.mode(),
+        symlink,
+    ])?;
+    let new_file_id = conn.last_insert_rowid();
+
+    Ok(new_file_id)
+}
+
+fn update_new_file(conn: &Connection, new_file_id: i64) -> Fallible {
+    let mut stmt = conn.prepare_cached("UPDATE new_files SET closed = TRUE WHERE id = ?")?;
+
+    stmt.execute(params![new_file_id])?;
+
+    Ok(())
+}
+
+fn delete_new_file(conn: &Connection, new_file_id: i64) -> Fallible {
+    let mut stmt = conn.prepare_cached("DELETE FROM new_files WHERE id = ?")?;
+
+    stmt.execute(params![new_file_id])?;
+
+    Ok(())
+}
+
+fn insert_new_mapping(conn: &Connection, file_id: i64, offset: u64, block_id: i64) -> Fallible {
+    let mut stmt = conn.prepare_cached(
+        "INSERT INTO new_mappings (new_file_id, offset, block_id) VALUES (?, ?, ?)",
+    )?;
+
+    stmt.execute(params![file_id, offset as i64, block_id])?;
 
     Ok(())
 }
