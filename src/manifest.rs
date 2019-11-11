@@ -16,11 +16,11 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with b2_backup.  If not, see <https://www.gnu.org/licenses/>.
 */
-use std::collections::{BTreeMap, HashMap};
-use std::convert::{TryFrom, TryInto};
+use std::collections::BTreeMap;
+use std::convert::TryInto;
 use std::ffi::OsStr;
 use std::fs::{create_dir_all, File, Metadata, Permissions};
-use std::io::{copy, ErrorKind, Read, Seek, SeekFrom, Write};
+use std::io::{copy, Read, Seek, SeekFrom, Write};
 use std::mem::replace;
 use std::os::unix::{
     ffi::OsStrExt,
@@ -36,8 +36,7 @@ use rusqlite::{
     types::ValueRef,
     Connection, OptionalExtension, TransactionBehavior, NO_PARAMS,
 };
-use smallvec::SmallVec;
-use sodiumoxide::crypto::hash::sha256::{hash, DIGESTBYTES};
+use sodiumoxide::crypto::hash::sha256::hash;
 use tempfile::tempfile;
 
 use super::{client::Client, was_interrupted, Bytes, Config, Fallible};
@@ -47,7 +46,7 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    pub fn open<P: AsRef<Path>>(path: P) -> Fallible<Self> {
+    pub fn open(path: impl AsRef<Path>) -> Fallible<Self> {
         let conn = Connection::open(path)?;
 
         conn.execute_batch(
@@ -78,8 +77,12 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE TABLE IF NOT EXISTS blocks (
     id INTEGER PRIMARY KEY,
     digest BLOB NOT NULL UNIQUE,
-    archive_id INTEGER NOT NULL REFERENCES archives (id) ON DELETE CASCADE
+    length INTEGER NOT NULL,
+    archive_id INTEGER NOT NULL REFERENCES archives (id) ON DELETE CASCADE,
+    archive_off INTEGER NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS blocks_by_archive ON blocks (archive_id);
 
 CREATE TABLE IF NOT EXISTS mappings (
     file_id INTEGER NOT NULL REFERENCES files (id) ON DELETE CASCADE,
@@ -88,6 +91,8 @@ CREATE TABLE IF NOT EXISTS mappings (
     PRIMARY KEY (file_id, offset)
 )
 WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS mappings_by_block ON mappings (block_id);
 
 CREATE TEMPORARY TABLE visited_files (
     file_id INTEGER PIMARY KEY
@@ -117,15 +122,12 @@ COMMIT;
         Ok(Self { conn })
     }
 
-    pub fn update<P>(
+    pub fn update(
         &mut self,
         keep_unvisited_files: bool,
         client: &Client,
-        producer: P,
-    ) -> Fallible
-    where
-        P: FnOnce(&Mutex<Update>) -> Fallible,
-    {
+        producer: impl FnOnce(&Mutex<Update>) -> Fallible,
+    ) -> Fallible {
         let trans = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Exclusive)?;
@@ -143,23 +145,32 @@ COMMIT;
 
             let update = Mutex::new(Update {
                 conn: &trans,
-                archive: Archive::new(archive_id)?,
+                archive_id,
+                archive_len: 0,
+                blocks: tempfile()?,
             });
 
             producer(&update)?;
 
             let was_interrupted = was_interrupted();
 
-            let mut archive = update.into_inner().unwrap().archive;
+            let mut update = update.into_inner().unwrap();
 
-            let archive_len = archive.len()?;
-            if !was_interrupted && archive_len != 0 {
-                let (b2_file_id, b2_length) = archive.upload(client)?;
+            if !was_interrupted && update.archive_len != 0 {
+                let name = format!("archive_{}", update.archive_id);
+                update.blocks.seek(SeekFrom::Start(0))?;
+                let (b2_file_id, b2_length) = client.upload(&name, &mut update.blocks)?;
 
-                update_archive(&trans, archive.id, archive_len, &b2_file_id, b2_length)?;
+                update_archive(
+                    &trans,
+                    update.archive_id,
+                    update.archive_len,
+                    &b2_file_id,
+                    b2_length,
+                )?;
                 collect_closed_new_files(&trans)?;
-            } else if was_interrupted || archive_id == archive.id {
-                delete_archive(&trans, archive.id)?;
+            } else if was_interrupted || update.archive_id == archive_id {
+                delete_archive(&trans, update.archive_id)?;
             }
 
             unused_archives =
@@ -174,7 +185,7 @@ COMMIT;
             return Ok(());
         }
 
-        upload_patchset(&trans, client, &patchset)?;
+        upload_patchset(&trans, client, patchset.as_slice())?;
 
         trans.commit()?;
 
@@ -218,7 +229,7 @@ COMMIT;
         let mut patchset = Vec::new();
         changegroup.output_strm(&mut patchset)?;
 
-        upload_patchset(&trans, client, &patchset)?;
+        upload_patchset(&trans, client, patchset.as_slice())?;
 
         for (patchset_id, _) in &small_patchsets {
             delete_patchset(&trans, *patchset_id)?;
@@ -255,7 +266,6 @@ DELETE FROM patchsets;
             .into_iter()
             .map(|(name, b2_file_id, b2_length)| {
                 let patchset_id = name.trim_start_matches("manifest_").parse()?;
-
                 Ok((patchset_id, (name, b2_file_id, b2_length)))
             })
             .collect::<Fallible<BTreeMap<_, _>>>()?;
@@ -264,8 +274,8 @@ DELETE FROM patchsets;
             println!("Applying patchset {}...", patchset_id);
             apply_patchset(
                 &trans,
-                patchset_id,
                 client.download(&name)?,
+                patchset_id,
                 &b2_file_id,
                 b2_length,
             )?;
@@ -319,14 +329,27 @@ ORDER BY MAX(blocks.archive_id) DESC
         path_filter: Option<&str>,
         target: &Path,
     ) -> Fallible {
-        let mut archives = LruCache::<i64, File>::new(config.archive_cache_cap);
+        let mut archives = LruCache::new(config.archive_cache_cap);
+        let mut buffer = Vec::new();
 
         let trans = self.conn.transaction()?;
 
         let mut select_files = trans.prepare(
             "SELECT id, path, size, mode, symlink FROM files WHERE IFNULL(path GLOB ?, TRUE)",
         )?;
-        let mut select_blocks = trans.prepare("SELECT blocks.archive_id, blocks.digest, mappings.offset FROM mappings, blocks WHERE mappings.block_id = blocks.id AND mappings.file_id = ?")?;
+        let mut select_blocks = trans.prepare(
+            r#"
+SELECT
+    blocks.length,
+    blocks.archive_id,
+    blocks.archive_off,
+    mappings.offset
+FROM mappings, blocks
+WHERE mappings.block_id = blocks.id
+AND mappings.file_id = ?
+ORDER BY blocks.archive_id ASC, blocks.archive_off ASC, mappings.offset ASC
+"#,
+        )?;
 
         let mut files = select_files.query(params![path_filter])?;
         while let Some(file) = files.next()? {
@@ -356,49 +379,28 @@ ORDER BY MAX(blocks.archive_id) DESC
             let file = File::create(path)?;
             file.set_len(size)?;
 
-            let mut mappings =
-                HashMap::<i64, HashMap<[u8; DIGESTBYTES], SmallVec<[u64; 2]>>>::new();
-
             let mut blocks = select_blocks.query(params![file_id])?;
             while let Some(block) = blocks.next()? {
-                let archive_id: i64 = block.get(0)?;
-                let digest = <[u8; DIGESTBYTES]>::try_from(block.get_raw(1).as_blob()?)?;
-                let offset = block.get_raw(2).as_i64()? as u64;
+                let length = block.get_raw(0).as_i64()? as u64;
+                let archive_id: i64 = block.get(1)?;
+                let archive_off = block.get_raw(2).as_i64()? as u64;
+                let offset = block.get_raw(3).as_i64()? as u64;
 
-                mappings
-                    .entry(archive_id)
-                    .or_default()
-                    .entry(digest)
-                    .or_default()
-                    .push(offset);
-            }
-
-            for (archive_id, mappings) in &mappings {
-                let archive = match archives.get_mut(archive_id) {
+                let archive = match archives.get_mut(&archive_id) {
                     Some(archive) => archive,
                     None => {
                         let name = format!("archive_{}", archive_id);
-                        let mut archive = client.download(&name)?;
+                        let mut archive = tempfile()?;
+                        copy(&mut client.download(&name)?, &mut archive)?;
 
-                        let mut temp = tempfile()?;
-                        copy(&mut archive, &mut temp)?;
-
-                        archives.insert(*archive_id, temp);
-                        archives.get_mut(archive_id).unwrap()
+                        archives.insert(archive_id, archive);
+                        archives.get_mut(&archive_id).unwrap()
                     }
                 };
 
-                archive.seek(SeekFrom::Start(0))?;
-
-                Archive::read(archive, |digest, block| {
-                    if let Some(offsets) = mappings.get(digest) {
-                        for offset in offsets {
-                            file.write_all_at(block, *offset)?;
-                        }
-                    }
-
-                    Ok(())
-                })?;
+                buffer.resize(length.try_into().unwrap(), 0);
+                archive.read_exact_at(&mut buffer, archive_off)?;
+                file.write_all_at(&buffer, offset)?;
             }
 
             file.set_permissions(Permissions::from_mode(mode))?;
@@ -414,7 +416,9 @@ ORDER BY MAX(blocks.archive_id) DESC
 
 pub struct Update<'a> {
     conn: &'a Connection,
-    archive: Archive,
+    archive_id: i64,
+    archive_len: u64,
+    blocks: File,
 }
 
 unsafe impl Send for Update<'_> {}
@@ -447,8 +451,9 @@ pub fn store_block(
 ) -> Fallible {
     let digest = hash(block);
 
+    let archive_id;
     let archive_len;
-    let mut archive;
+    let mut blocks;
 
     {
         let mut self_ = self_.lock().unwrap();
@@ -459,26 +464,38 @@ pub fn store_block(
             return insert_new_mapping(self_.conn, new_file_id, offset, block_id);
         }
 
-        let block_id = insert_block(self_.conn, digest.as_ref(), self_.archive.id)?;
+        let length = block.len().try_into().unwrap();
+        let block_id = insert_block(
+            self_.conn,
+            digest.as_ref(),
+            length,
+            self_.archive_id,
+            self_.archive_len,
+        )?;
 
         insert_new_mapping(self_.conn, new_file_id, offset, block_id)?;
 
-        self_.archive.store_block(digest.as_ref(), block)?;
+        self_.blocks.write_all(block)?;
 
-        archive_len = self_.archive.len()?;
-        if archive_len < config.min_archive_len {
+        self_.archive_len += length;
+        if self_.archive_len < config.min_archive_len {
             return Ok(());
         }
 
-        let archive_id = insert_archive(self_.conn)?;
-        archive = replace(&mut self_.archive, Archive::new(archive_id)?)
+        let next_archive_id = insert_archive(self_.conn)?;
+
+        archive_id = replace(&mut self_.archive_id, next_archive_id);
+        archive_len = replace(&mut self_.archive_len, 0);
+        blocks = replace(&mut self_.blocks, tempfile()?);
     };
 
-    let (b2_file_id, b2_length) = archive.upload(client)?;
+    let name = format!("archive_{}", archive_id);
+    blocks.seek(SeekFrom::Start(0))?;
+    let (b2_file_id, b2_length) = client.upload(&name, &mut blocks)?;
 
     let self_ = self_.lock().unwrap();
 
-    update_archive(self_.conn, archive.id, archive_len, &b2_file_id, b2_length)?;
+    update_archive(self_.conn, archive_id, archive_len, &b2_file_id, b2_length)?;
     collect_closed_new_files(self_.conn)?;
 
     Ok(())
@@ -534,30 +551,25 @@ impl Update<'_> {
             return Err("Not enough small archives".into());
         }
 
+        let mut buffer = Vec::new();
+
         for archive_id in &small_archives {
             let name = format!("archive_{}", archive_id);
-            let archive = client.download(&name)?;
+            let mut archive = tempfile()?;
+            copy(&mut client.download(&name)?, &mut archive)?;
 
-            let mut updated_blocks = 0;
-            let mut blocks = 0;
+            let blocks = select_blocks(self.conn, *archive_id)?;
 
-            Archive::read(archive, |digest, block| {
-                if let Some(block_id) = select_block(self.conn, digest)? {
-                    self.archive.store_block(digest, block)?;
+            for (block_id, length, archive_off) in &blocks {
+                buffer.resize((*length).try_into().unwrap(), 0);
+                archive.read_exact_at(&mut buffer, *archive_off)?;
+                self.blocks.write_all(&buffer)?;
 
-                    update_block(self.conn, block_id, self.archive.id)?;
+                update_block(self.conn, *block_id, self.archive_id, self.archive_len)?;
+                self.archive_len += length;
+            }
 
-                    updated_blocks += 1;
-                }
-
-                blocks += 1;
-
-                Ok(())
-            })?;
-
-            println!("Updated {} out of {} blocks", updated_blocks, blocks);
-
-            if self.archive.len()? >= config.min_archive_len {
+            if self.archive_len >= config.min_archive_len {
                 break;
             }
         }
@@ -566,7 +578,7 @@ impl Update<'_> {
     }
 }
 
-fn upload_patchset(conn: &Connection, client: &Client, patchset: &[u8]) -> Fallible {
+fn upload_patchset(conn: &Connection, client: &Client, patchset: impl Read) -> Fallible {
     let patchset_id = insert_patchset(conn)?;
 
     let name = format!("manifest_{}", patchset_id);
@@ -584,8 +596,8 @@ fn upload_patchset(conn: &Connection, client: &Client, patchset: &[u8]) -> Falli
 
 fn apply_patchset(
     conn: &Connection,
-    patchset_id: i64,
     mut patchset: impl Read,
+    patchset_id: i64,
     b2_file_id: &str,
     b2_length: u64,
 ) -> Fallible {
@@ -606,71 +618,6 @@ fn apply_patchset(
     )?;
 
     Ok(())
-}
-
-struct Archive {
-    id: i64,
-    blocks: File,
-}
-
-impl Archive {
-    fn new(id: i64) -> Fallible<Self> {
-        Ok(Self {
-            id,
-            blocks: tempfile()?,
-        })
-    }
-
-    fn store_block(&mut self, digest: &[u8], block: &[u8]) -> Fallible {
-        let block_len = u32::try_from(block.len()).unwrap().to_be_bytes();
-
-        self.blocks.write_all(digest)?;
-        self.blocks.write_all(&block_len)?;
-        self.blocks.write_all(block)?;
-
-        Ok(())
-    }
-
-    fn len(&mut self) -> Fallible<u64> {
-        let len = self.blocks.seek(SeekFrom::Current(0))?;
-
-        Ok(len)
-    }
-
-    fn upload(&mut self, client: &Client) -> Fallible<(String, u64)> {
-        let name = format!("archive_{}", self.id);
-        self.blocks.seek(SeekFrom::Start(0))?;
-        let (b2_file_id, b2_length) = client.upload(&name, &mut self.blocks)?;
-
-        Ok((b2_file_id, b2_length))
-    }
-
-    fn read<R, C>(mut reader: R, mut consumer: C) -> Fallible
-    where
-        R: Read,
-        C: FnMut(&[u8], &[u8]) -> Fallible,
-    {
-        let mut digest = [0; DIGESTBYTES];
-        let mut block_len = [0; 4];
-        let mut block = Vec::new();
-
-        loop {
-            match reader.read_exact(&mut digest[..]) {
-                Ok(()) => (),
-                Err(err) if err.kind() == ErrorKind::UnexpectedEof => break,
-                Err(err) => return Err(err.into()),
-            }
-
-            reader.read_exact(&mut block_len[..])?;
-
-            block.resize(u32::from_be_bytes(block_len).try_into().unwrap(), 0);
-            reader.read_exact(&mut block)?;
-
-            consumer(&digest, &block)?;
-        }
-
-        Ok(())
-    }
 }
 
 fn insert_patchset(conn: &Connection) -> Fallible<i64> {
@@ -778,19 +725,51 @@ fn select_block(conn: &Connection, digest: &[u8]) -> Fallible<Option<i64>> {
     Ok(block_id)
 }
 
-fn insert_block(conn: &Connection, digest: &[u8], archive_id: i64) -> Fallible<i64> {
-    let mut stmt = conn.prepare_cached("INSERT INTO blocks (digest, archive_id) VALUES (?, ?)")?;
+fn select_blocks(conn: &Connection, archive_id: i64) -> Fallible<Vec<(i64, u64, u64)>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, length, archive_off FROM blocks WHERE archive_id = ? ORDER BY archive_off ASC",
+    )?;
 
-    stmt.execute(params![digest, archive_id])?;
+    let blocks = stmt
+        .query_map(params![archive_id], |row| {
+            Ok((
+                row.get_raw(0).as_i64()?,
+                row.get_raw(1).as_i64()? as u64,
+                row.get_raw(2).as_i64()? as u64,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(blocks)
+}
+
+fn insert_block(
+    conn: &Connection,
+    digest: &[u8],
+    length: u64,
+    archive_id: i64,
+    archive_off: u64,
+) -> Fallible<i64> {
+    let mut stmt = conn.prepare_cached(
+        "INSERT INTO blocks (digest, length, archive_id, archive_off) VALUES (?, ?, ?, ?)",
+    )?;
+
+    stmt.execute(params![
+        digest,
+        length as i64,
+        archive_id,
+        archive_off as i64
+    ])?;
     let block_id = conn.last_insert_rowid();
 
     Ok(block_id)
 }
 
-fn update_block(conn: &Connection, block_id: i64, archive_id: i64) -> Fallible {
-    let mut stmt = conn.prepare_cached("UPDATE blocks SET archive_id = ? WHERE id = ?")?;
+fn update_block(conn: &Connection, block_id: i64, archive_id: i64, archive_off: u64) -> Fallible {
+    let mut stmt =
+        conn.prepare_cached("UPDATE blocks SET archive_id = ?, archive_off = ? WHERE id = ?")?;
 
-    stmt.execute(params![archive_id, block_id])?;
+    stmt.execute(params![archive_id, archive_off as i64, block_id])?;
 
     Ok(())
 }

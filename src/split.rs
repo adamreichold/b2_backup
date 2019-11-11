@@ -21,11 +21,7 @@ use std::mem::replace;
 
 use super::Fallible;
 
-pub fn split<R, C>(mut reader: R, mut consumer: C) -> Fallible
-where
-    R: Read,
-    C: FnMut(&[u8]) -> Fallible,
-{
+pub fn split(mut reader: impl Read, mut consumer: impl FnMut(&[u8]) -> Fallible) -> Fallible {
     let mut buf = Vec::new();
     let mut sum = RollingSum::new();
 

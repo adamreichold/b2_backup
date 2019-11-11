@@ -26,7 +26,7 @@ use std::env::{args, current_dir};
 use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use hex::decode_to_slice;
@@ -54,7 +54,7 @@ fn main() -> Fallible {
 
     let mut manifest = Manifest::open("manifest.db")?;
 
-    let config = Config::read("config.yaml")?;
+    let config: Config = from_reader(File::open("config.yaml")?)?;
 
     if let Some(num_threads) = config.num_threads {
         ThreadPoolBuilder::new()
@@ -123,10 +123,6 @@ pub struct Config {
 }
 
 impl Config {
-    fn read<P: AsRef<Path>>(path: P) -> Fallible<Self> {
-        Ok(from_reader(File::open(path)?)?)
-    }
-
     fn key(&self) -> Fallible<Key> {
         let mut key = [0; KEYBYTES];
         decode_to_slice(&self.key, &mut key)?;
