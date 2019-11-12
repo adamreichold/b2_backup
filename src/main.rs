@@ -18,6 +18,7 @@ along with b2_backup.  If not, see <https://www.gnu.org/licenses/>.
 */
 mod backup;
 mod client;
+mod database;
 mod manifest;
 mod pack;
 mod split;
