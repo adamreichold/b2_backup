@@ -26,11 +26,11 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use lru_cache::LruCache;
+use openssl::sha::sha256;
 use rusqlite::{
     session::{Changegroup, ConflictAction, ConflictType, Session},
     Connection, TransactionBehavior,
 };
-use sodiumoxide::crypto::hash::sha256::hash;
 use tempfile::tempfile;
 
 use super::{
@@ -405,7 +405,7 @@ pub fn store_block(
     offset: u64,
     block: &[u8],
 ) -> Fallible {
-    let digest = hash(block);
+    let digest = sha256(block);
 
     let archive_id;
     let archive_len;
@@ -414,7 +414,7 @@ pub fn store_block(
     {
         let mut update = update.lock().unwrap();
 
-        let block_id = select_block(update.conn, digest.as_ref())?;
+        let block_id = select_block(update.conn, &digest)?;
 
         if let Some(block_id) = block_id {
             return insert_new_mapping(update.conn, new_file_id, offset, block_id);

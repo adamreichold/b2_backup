@@ -22,7 +22,6 @@ use std::os::unix::{ffi::OsStrExt, fs::MetadataExt};
 use std::path::Path;
 
 use rusqlite::{params, types::ValueRef, Connection, OptionalExtension, NO_PARAMS};
-use sodiumoxide::crypto::hash::sha256::Digest;
 
 use super::Fallible;
 
@@ -265,7 +264,7 @@ pub fn select_block(conn: &Connection, digest: &[u8]) -> Fallible<Option<i64>> {
 
 pub fn insert_block(
     conn: &Connection,
-    digest: &Digest,
+    digest: &[u8],
     length: u64,
     archive_id: i64,
     archive_off: u64,
@@ -275,7 +274,7 @@ pub fn insert_block(
     )?;
 
     stmt.execute(params![
-        digest.as_ref(),
+        digest,
         length as i64,
         archive_id,
         archive_off as i64

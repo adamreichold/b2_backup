@@ -30,7 +30,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use hex::decode_to_slice;
+use hex::decode_to_slice as decode_hex;
 use libc::{c_int, sighandler_t, signal, SIGINT, SIG_ERR};
 use rayon::{
     iter::{IntoParallelRefIterator, ParallelIterator},
@@ -38,15 +38,12 @@ use rayon::{
 };
 use serde::Deserialize;
 use serde_yaml::from_reader;
-use sodiumoxide::crypto::secretbox::{Key, KEYBYTES};
 
-use self::{backup::backup, client::Client, manifest::Manifest};
+use self::{backup::backup, client::Client, manifest::Manifest, pack::KEY_LEN};
 
 type Fallible<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 
 fn main() -> Fallible {
-    sodiumoxide::init().map_err(|()| "Failed to initialize libsodium")?;
-
     let mut manifest = Manifest::open("manifest.db")?;
 
     let config: Config = from_reader(File::open("config.yaml")?)?;
@@ -130,10 +127,10 @@ pub struct Config {
 }
 
 impl Config {
-    fn key(&self) -> Fallible<Key> {
-        let mut key = [0; KEYBYTES];
-        decode_to_slice(&self.key, &mut key)?;
-        Ok(Key(key))
+    fn key(&self) -> Fallible<[u8; KEY_LEN]> {
+        let mut key = [0; KEY_LEN];
+        decode_hex(&self.key, &mut key)?;
+        Ok(key)
     }
 
     fn def_keep_deleted_files() -> bool {
