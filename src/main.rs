@@ -45,12 +45,6 @@ use self::{backup::backup, client::Client, manifest::Manifest};
 type Fallible<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 
 fn main() -> Fallible {
-    unsafe {
-        if signal(SIGINT, interrupt as extern "C" fn(c_int) as sighandler_t) == SIG_ERR {
-            return Err("Failed to install signal handler".into());
-        }
-    }
-
     sodiumoxide::init().map_err(|()| "Failed to initialize libsodium")?;
 
     let mut manifest = Manifest::open("manifest.db")?;
@@ -69,6 +63,8 @@ fn main() -> Fallible {
 
     match args.nth(1).as_ref().map(String::as_str) {
         None | Some("backup") => manifest.update(config.keep_deleted_files, &client, |update| {
+            install_interrupt_handler()?;
+
             config
                 .includes
                 .par_iter()
@@ -91,15 +87,25 @@ fn main() -> Fallible {
     }
 }
 
-static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+fn install_interrupt_handler() -> Fallible {
+    extern "C" fn interrupt(_signum: c_int) {
+        INTERRUPTED.store(true, Ordering::SeqCst);
+    }
 
-extern "C" fn interrupt(_signum: c_int) {
-    INTERRUPTED.store(true, Ordering::SeqCst);
+    unsafe {
+        if signal(SIGINT, interrupt as extern "C" fn(c_int) as sighandler_t) == SIG_ERR {
+            return Err("Failed to install signal handler".into());
+        }
+    }
+
+    Ok(())
 }
 
 fn was_interrupted() -> bool {
     INTERRUPTED.load(Ordering::SeqCst)
 }
+
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
