@@ -472,12 +472,18 @@ pub fn select_small_archives(conn: &Connection, min_archive_len: u64) -> Fallibl
     let mut stmt = conn.prepare(
         r#"
 SELECT
-    archives.id
-FROM archives, blocks
-WHERE archives.id = blocks.archive_id
-AND archives.length < ?
-GROUP BY archives.id
-ORDER BY COUNT(blocks.id) ASC, archives.length DESC
+    id
+FROM (
+    SELECT
+        archives.id as id,
+        archives.b2_length as b2_length,
+        SUM(blocks.length) as blocks_length
+    FROM archives, blocks
+    WHERE archives.id = blocks.archive_id
+    GROUP BY archives.id
+)
+WHERE blocks_length < ?
+ORDER BY blocks_length ASC, b2_length DESC
 "#,
     )?;
 
