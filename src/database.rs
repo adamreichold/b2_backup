@@ -115,6 +115,16 @@ DELETE FROM patchsets;
     Ok(())
 }
 
+pub fn select_patchset(conn: &Connection, patchset_id: i64) -> Fallible<bool> {
+    let mut stmt = conn.prepare_cached("SELECT TRUE FROM patchsets WHERE id = ?")?;
+
+    let exists: Option<bool> = stmt
+        .query_row(params![patchset_id], |row| row.get(0))
+        .optional()?;
+
+    Ok(exists.is_some())
+}
+
 pub fn insert_def_patchset(conn: &Connection) -> Fallible<i64> {
     conn.execute("INSERT INTO patchsets DEFAULT VALUES", NO_PARAMS)?;
     let patchset_id = conn.last_insert_rowid();
@@ -154,6 +164,16 @@ pub fn delete_patchset(conn: &Connection, patchset_id: i64) -> Fallible {
     conn.execute("DELETE FROM patchsets WHERE id = ?", params![patchset_id])?;
 
     Ok(())
+}
+
+pub fn select_archive(conn: &Connection, archive_id: i64) -> Fallible<bool> {
+    let mut stmt = conn.prepare_cached("SELECT TRUE FROM archives WHERE id = ?")?;
+
+    let exists: Option<bool> = stmt
+        .query_row(params![archive_id], |row| row.get(0))
+        .optional()?;
+
+    Ok(exists.is_some())
 }
 
 pub fn insert_def_archive(conn: &Connection) -> Fallible<i64> {

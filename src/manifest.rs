@@ -39,11 +39,11 @@ use super::{
         clear_tables, delete_archive, delete_mappings, delete_new_file, delete_patchset,
         delete_unused_blocks, delete_unvisited_files, delete_visited_files, insert_block,
         insert_def_archive, insert_def_patchset, insert_file, insert_mappings, insert_new_file,
-        insert_new_mapping, insert_patchset, insert_visited_file, open_connection, select_block,
-        select_blocks_by_archive, select_blocks_by_file, select_closed_new_files, select_file,
-        select_files_by_path, select_small_archives, select_small_patchsets, select_storage_used,
-        select_unused_archives, update_archive, update_block, update_file, update_new_file,
-        update_patchset,
+        insert_new_mapping, insert_patchset, insert_visited_file, open_connection, select_archive,
+        select_block, select_blocks_by_archive, select_blocks_by_file, select_closed_new_files,
+        select_file, select_files_by_path, select_patchset, select_small_archives,
+        select_small_patchsets, select_storage_used, select_unused_archives, update_archive,
+        update_block, update_file, update_new_file, update_patchset,
     },
     was_interrupted, Bytes, Config, Fallible,
 };
@@ -221,15 +221,14 @@ impl Manifest {
     }
 
     pub fn restore(&mut self, client: &Client) -> Fallible {
-        let patchsets = client.list("manifest_")?;
-
         let trans = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Exclusive)?;
 
         clear_tables(&trans)?;
 
-        let patchsets = patchsets
+        let patchsets = client
+            .list("manifest_")?
             .into_iter()
             .map(|(name, b2_file_id, b2_length)| {
                 let patchset_id = name.trim_start_matches("manifest_").parse()?;
@@ -350,6 +349,30 @@ impl Manifest {
 
             Ok(())
         })
+    }
+
+    pub fn purge_storage(&mut self, client: &Client) -> Fallible {
+        let trans = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Exclusive)?;
+
+        for (name, b2_file_id, _) in client.list("manifest_")? {
+            let patchset_id = name.trim_start_matches("manifest_").parse()?;
+
+            if !select_patchset(&trans, patchset_id)? {
+                client.remove(&name, &b2_file_id)?;
+            }
+        }
+
+        for (name, b2_file_id, _) in client.list("archive_")? {
+            let archive_id = name.trim_start_matches("archive_").parse()?;
+
+            if !select_archive(&trans, archive_id)? {
+                client.remove(&name, &b2_file_id)?;
+            }
+        }
+
+        Ok(())
     }
 }
 

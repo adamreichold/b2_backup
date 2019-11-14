@@ -80,6 +80,7 @@ fn main() -> Fallible {
                 .map(|arg| Ok(arg.into()))
                 .unwrap_or_else(current_dir)?,
         ),
+        Some("purge-storage") => manifest.purge_storage(&client),
         Some(arg) => Err(format!("Unexpected argument {}", arg).into()),
     }
 }
