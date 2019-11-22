@@ -24,19 +24,18 @@ use std::thread::{current, sleep, ThreadId};
 use std::time::Duration;
 
 use attohttpc::{get, post};
-use base64::encode as encode_base64;
-use hex::encode as encode_hex;
 use openssl::sha::sha1;
 use serde::{Deserialize, Serialize};
+use sodiumoxide::{base64, crypto::secretbox::Key, hex};
 
 use super::{
-    pack::{pack, unpack, KEY_LEN},
+    pack::{pack, unpack},
     Bytes, Config, Fallible,
 };
 
 pub struct Client<'a> {
     config: &'a Config,
-    key: [u8; KEY_LEN],
+    key: Key,
     token: String,
     api_url: String,
     download_url: String,
@@ -50,7 +49,10 @@ impl<'a> Client<'a> {
                 "Authorization",
                 format!(
                     "Basic {}",
-                    encode_base64(&format!("{}:{}", config.app_key_id, config.app_key))
+                    base64::encode(
+                        format!("{}:{}", config.app_key_id, config.app_key),
+                        base64::Variant::Original
+                    )
                 ),
             )
             .send()?;
@@ -280,7 +282,7 @@ impl Uploader {
         let resp = post(&self.url)
             .header("Authorization", &self.token)
             .header("X-Bz-File-Name", name)
-            .header("X-Bz-Content-Sha1", encode_hex(&sha1(&buf)))
+            .header("X-Bz-Content-Sha1", hex::encode(sha1(buf)))
             .bytes(buf)
             .send()?;
 

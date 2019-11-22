@@ -23,6 +23,7 @@ mod manifest;
 mod pack;
 mod split;
 
+use std::convert::TryInto;
 use std::env::{args, current_dir};
 use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FmtResult};
@@ -30,7 +31,6 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use hex::decode_to_slice as decode_hex;
 use libc::{c_int, sighandler_t, signal, SIGINT, SIG_ERR};
 use rayon::{
     iter::{IntoParallelRefIterator, ParallelIterator},
@@ -38,12 +38,15 @@ use rayon::{
 };
 use serde::Deserialize;
 use serde_yaml::from_reader;
+use sodiumoxide::{crypto::secretbox::Key, hex};
 
-use self::{backup::backup, client::Client, manifest::Manifest, pack::KEY_LEN};
+use self::{backup::backup, client::Client, manifest::Manifest};
 
 type Fallible<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 
 fn main() -> Fallible {
+    sodiumoxide::init().map_err(|()| "Failed to initialize libsodium")?;
+
     let mut manifest = Manifest::open("manifest.db")?;
 
     let config: Config = from_reader(File::open("config.yaml")?)?;
@@ -128,10 +131,13 @@ pub struct Config {
 }
 
 impl Config {
-    fn key(&self) -> Fallible<[u8; KEY_LEN]> {
-        let mut key = [0; KEY_LEN];
-        decode_hex(&self.key, &mut key)?;
-        Ok(key)
+    fn key(&self) -> Fallible<Key> {
+        let key = hex::decode(&self.key)
+            .map_err(|()| "Failed to parse key")?
+            .as_slice()
+            .try_into()?;
+
+        Ok(Key(key))
     }
 
     fn def_keep_deleted_files() -> bool {
