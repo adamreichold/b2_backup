@@ -26,7 +26,7 @@ use std::time::Duration;
 use attohttpc::{get, post};
 use openssl::sha::sha1;
 use serde::{Deserialize, Serialize};
-use sodiumoxide::{base64, crypto::secretbox::Key, hex};
+use sodiumoxide::{crypto::secretbox::Key, hex};
 
 use super::{
     pack::{pack, unpack},
@@ -45,16 +45,7 @@ pub struct Client<'a> {
 impl<'a> Client<'a> {
     pub fn new(config: &'a Config) -> Fallible<Self> {
         let resp = get("https://api.backblazeb2.com/b2api/v2/b2_authorize_account")
-            .header(
-                "Authorization",
-                format!(
-                    "Basic {}",
-                    base64::encode(
-                        format!("{}:{}", config.app_key_id, config.app_key),
-                        base64::Variant::Original
-                    )
-                ),
-            )
+            .basic_auth(&config.app_key_id, Some(&config.app_key))
             .send()?;
 
         if !resp.status().is_success() {
