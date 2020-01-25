@@ -12,7 +12,7 @@ libc = "0.2"
 lru-cache = "0.1"
 openssl = "0.10"
 rayon = "1.2"
-rusqlite = { git = "https://github.com/jgallagher/rusqlite.git", features = ["bundled", "buildtime_bindgen", "session"] }
+rusqlite = { version = "0.21", features = ["bundled", "buildtime_bindgen", "session"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
 sodiumoxide = { git = "https://github.com/sodiumoxide/sodiumoxide.git" }
