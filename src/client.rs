@@ -23,10 +23,14 @@ use std::sync::Mutex;
 use std::thread::{current, sleep, ThreadId};
 use std::time::Duration;
 
-use attohttpc::{get, post};
 use openssl::sha::sha1;
 use serde::{Deserialize, Serialize};
-use sodiumoxide::{crypto::secretbox::Key, hex};
+use sodiumoxide::{base64, crypto::secretbox::Key, hex};
+use zeptohttpc::{
+    get,
+    http::header::{AUTHORIZATION, CONTENT_TYPE},
+    post, RequestBuilderExt, RequestExt, ResponseExt,
+};
 
 use super::{
     pack::{pack, unpack},
@@ -45,11 +49,26 @@ pub struct Client<'a> {
 impl<'a> Client<'a> {
     pub fn new(config: &'a Config) -> Fallible<Self> {
         let resp = get("https://api.backblazeb2.com/b2api/v2/b2_authorize_account")
-            .basic_auth(&config.app_key_id, Some(&config.app_key))
+            .header(
+                AUTHORIZATION,
+                format!(
+                    "Basic {}",
+                    base64::encode(
+                        format!("{}:{}", config.app_key_id, config.app_key),
+                        base64::Variant::Original,
+                    )
+                ),
+            )
+            .empty()?
             .send()?;
 
         if !resp.status().is_success() {
-            return Err(format!("Failed to authorize: {} {}", resp.status(), resp.text()?).into());
+            return Err(format!(
+                "Failed to authorize: {} {}",
+                resp.status(),
+                resp.into_string()?
+            )
+            .into());
         }
 
         #[derive(Debug, Deserialize)]
@@ -81,19 +100,20 @@ impl<'a> Client<'a> {
             "{}/file/{}/{}",
             self.download_url, self.config.bucket_name, name
         ))
-        .header("Authorization", &self.token)
+        .header(AUTHORIZATION, &self.token)
+        .empty()?
         .send()?;
 
         if !resp.status().is_success() {
             return Err(format!(
                 "Failed to download file: {} {}",
                 resp.status(),
-                resp.text()?
+                resp.into_string()?
             )
             .into());
         }
 
-        Ok(unpack(&self.key, resp.bytes()?)?)
+        Ok(unpack(&self.key, resp.into_vec()?)?)
     }
 
     pub fn remove(&self, name: &str, id: &str) -> Fallible {
@@ -108,14 +128,17 @@ impl<'a> Client<'a> {
         }
 
         let resp = post(&format!("{}/b2api/v2/b2_delete_file_version", self.api_url))
-            .header("Authorization", &self.token)
-            .json(&Request { name, id })?
+            .header(AUTHORIZATION, &self.token)
+            .json_buffered(&Request { name, id })?
             .send()?;
 
         if !resp.status().is_success() {
-            return Err(
-                format!("Failed to remove file: {} {}", resp.status(), resp.text()?).into(),
-            );
+            return Err(format!(
+                "Failed to remove file: {} {}",
+                resp.status(),
+                resp.into_string()?
+            )
+            .into());
         }
 
         Ok(())
@@ -138,8 +161,8 @@ impl<'a> Client<'a> {
             }
 
             let resp = post(&format!("{}/b2api/v2/b2_list_file_names", self.api_url))
-                .header("Authorization", &self.token)
-                .json(&Request {
+                .header(AUTHORIZATION, &self.token)
+                .json_buffered(&Request {
                     bucket_id: &self.config.bucket_id,
                     prefix,
                     start,
@@ -148,9 +171,12 @@ impl<'a> Client<'a> {
                 .send()?;
 
             if !resp.status().is_success() {
-                return Err(
-                    format!("Failed to list files: {} {}", resp.status(), resp.text()?).into(),
-                );
+                return Err(format!(
+                    "Failed to list files: {} {}",
+                    resp.status(),
+                    resp.into_string()?
+                )
+                .into());
             }
 
             #[derive(Deserialize)]
@@ -229,8 +255,8 @@ impl<'a> Client<'a> {
         }
 
         let resp = post(&format!("{}/b2api/v2/b2_get_upload_url", self.api_url))
-            .header("Authorization", &self.token)
-            .json(&Request {
+            .header(AUTHORIZATION, &self.token)
+            .json_buffered(&Request {
                 bucket_id: &self.config.bucket_id,
             })?
             .send()?;
@@ -239,7 +265,7 @@ impl<'a> Client<'a> {
             return Err(format!(
                 "Failed to prepare uploader: {} {}",
                 resp.status(),
-                resp.text()?
+                resp.into_string()?
             )
             .into());
         }
@@ -271,16 +297,20 @@ impl Uploader {
         println!("Uploading {} to {}...", Bytes(buf.len() as _), name);
 
         let resp = post(&self.url)
-            .header("Authorization", &self.token)
+            .header(AUTHORIZATION, &self.token)
+            .header(CONTENT_TYPE, "application/octet-stream")
             .header("X-Bz-File-Name", name)
             .header("X-Bz-Content-Sha1", hex::encode(sha1(buf)))
-            .bytes(buf)
+            .from_mem(buf)?
             .send()?;
 
         if !resp.status().is_success() {
-            return Err(
-                format!("Failed to upload file: {} {}", resp.status(), resp.text()?).into(),
-            );
+            return Err(format!(
+                "Failed to upload file: {} {}",
+                resp.status(),
+                resp.into_string()?
+            )
+            .into());
         }
 
         #[derive(Deserialize)]

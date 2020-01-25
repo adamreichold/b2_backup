@@ -61,7 +61,7 @@ fn main() -> Fallible {
 
     let mut args = args();
 
-    match args.nth(1).as_ref().map(String::as_str) {
+    match args.nth(1).as_deref() {
         None | Some("backup") => manifest.update(config.keep_deleted_files, &client, |update| {
             install_interrupt_handler()?;
 
@@ -73,11 +73,11 @@ fn main() -> Fallible {
         Some("collect-small-archives") => manifest.collect_small_archives(&config, &client),
         Some("collect-small-patchsets") => manifest.collect_small_patchsets(&config, &client),
         Some("restore-manifest") => manifest.restore(&client),
-        Some("list-files") => manifest.list_files(args.next().as_ref().map(String::as_str)),
+        Some("list-files") => manifest.list_files(args.next().as_deref()),
         Some("restore-files") => manifest.restore_files(
             &config,
             &client,
-            args.next().as_ref().map(String::as_str),
+            args.next().as_deref(),
             &args
                 .next()
                 .map(|arg| Ok(arg.into()))
