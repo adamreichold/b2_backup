@@ -1,0 +1,9 @@
+[Unit]
+Description=B2 backup timer
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=default.target

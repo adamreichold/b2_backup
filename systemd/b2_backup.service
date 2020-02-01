@@ -1,0 +1,11 @@
+[Unit]
+Description=B2 backup service
+
+[Service]
+ExecStart=%h/bin/b2_backup/b2_backup
+WorkingDirectory=%h/bin/b2_backup
+Restart=on-failure
+RestartSec=300
+KillMode=mixed
+KillSignal=SIGINT
+TimeoutStopSec=60
