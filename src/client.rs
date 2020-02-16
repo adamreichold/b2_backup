@@ -27,9 +27,11 @@ use openssl::sha::sha1;
 use serde::{Deserialize, Serialize};
 use sodiumoxide::{base64, crypto::secretbox::Key, hex};
 use zeptohttpc::{
-    get,
-    http::header::{AUTHORIZATION, CONTENT_TYPE},
-    post, RequestBuilderExt, RequestExt, ResponseExt,
+    http::{
+        header::{AUTHORIZATION, CONTENT_TYPE},
+        Request,
+    },
+    RequestBuilderExt, RequestExt, ResponseExt,
 };
 
 use super::{
@@ -48,7 +50,7 @@ pub struct Client<'a> {
 
 impl<'a> Client<'a> {
     pub fn new(config: &'a Config) -> Fallible<Self> {
-        let resp = get("https://api.backblazeb2.com/b2api/v2/b2_authorize_account")
+        let resp = Request::get("https://api.backblazeb2.com/b2api/v2/b2_authorize_account")
             .header(
                 AUTHORIZATION,
                 format!(
@@ -96,7 +98,7 @@ impl<'a> Client<'a> {
     pub fn download(&self, name: &str) -> Fallible<impl Read> {
         println!("Downloading {}...", name);
 
-        let resp = get(&format!(
+        let resp = Request::get(&format!(
             "{}/file/{}/{}",
             self.download_url, self.config.bucket_name, name
         ))
@@ -120,16 +122,16 @@ impl<'a> Client<'a> {
         println!("Removing {}...", name);
 
         #[derive(Serialize)]
-        struct Request<'a> {
+        struct Body<'a> {
             #[serde(rename = "fileName")]
             name: &'a str,
             #[serde(rename = "fileId")]
             id: &'a str,
         }
 
-        let resp = post(&format!("{}/b2api/v2/b2_delete_file_version", self.api_url))
+        let resp = Request::post(&format!("{}/b2api/v2/b2_delete_file_version", self.api_url))
             .header(AUTHORIZATION, &self.token)
-            .json_buffered(&Request { name, id })?
+            .json_buffered(&Body { name, id })?
             .send()?;
 
         if !resp.status().is_success() {
@@ -150,7 +152,7 @@ impl<'a> Client<'a> {
 
         loop {
             #[derive(Serialize)]
-            struct Request<'a> {
+            struct Body<'a> {
                 #[serde(rename = "bucketId")]
                 bucket_id: &'a str,
                 prefix: &'a str,
@@ -160,9 +162,9 @@ impl<'a> Client<'a> {
                 count: i32,
             }
 
-            let resp = post(&format!("{}/b2api/v2/b2_list_file_names", self.api_url))
+            let resp = Request::post(&format!("{}/b2api/v2/b2_list_file_names", self.api_url))
                 .header(AUTHORIZATION, &self.token)
-                .json_buffered(&Request {
+                .json_buffered(&Body {
                     bucket_id: &self.config.bucket_id,
                     prefix,
                     start,
@@ -249,14 +251,14 @@ impl<'a> Client<'a> {
 
     fn uploader(&self) -> Fallible<Uploader> {
         #[derive(Serialize)]
-        struct Request<'a> {
+        struct Body<'a> {
             #[serde(rename = "bucketId")]
             bucket_id: &'a str,
         }
 
-        let resp = post(&format!("{}/b2api/v2/b2_get_upload_url", self.api_url))
+        let resp = Request::post(&format!("{}/b2api/v2/b2_get_upload_url", self.api_url))
             .header(AUTHORIZATION, &self.token)
-            .json_buffered(&Request {
+            .json_buffered(&Body {
                 bucket_id: &self.config.bucket_id,
             })?
             .send()?;
@@ -296,7 +298,7 @@ impl Uploader {
     fn upload(&self, name: &str, buf: &[u8]) -> Fallible<String> {
         println!("Uploading {} to {}...", Bytes(buf.len() as _), name);
 
-        let resp = post(&self.url)
+        let resp = Request::post(&self.url)
             .header(AUTHORIZATION, &self.token)
             .header(CONTENT_TYPE, "application/octet-stream")
             .header("X-Bz-File-Name", name)
