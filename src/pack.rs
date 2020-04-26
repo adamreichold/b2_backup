@@ -18,46 +18,61 @@ along with b2_backup.  If not, see <https://www.gnu.org/licenses/>.
 */
 use std::io::{Cursor, Read};
 
-use sodiumoxide::crypto::secretbox::{
-    gen_nonce, open_detached, seal_detached, Key, Nonce, Tag, MACBYTES, NONCEBYTES,
+use chacha20poly1305::{
+    aead::{
+        generic_array::{typenum::Unsigned, GenericArray},
+        Aead, NewAead,
+    },
+    XChaCha20Poly1305,
 };
+use ring::rand::{SecureRandom, SystemRandom};
 use zstd::{encode_all, Decoder};
 
 use super::Fallible;
 
-pub fn pack(key: &Key, compression_level: i32, reader: impl Read) -> Fallible<Vec<u8>> {
+pub type Key = GenericArray<u8, <XChaCha20Poly1305 as NewAead>::KeySize>;
+
+type Nonce = GenericArray<u8, <XChaCha20Poly1305 as Aead>::NonceSize>;
+type Tag = GenericArray<u8, <XChaCha20Poly1305 as Aead>::TagSize>;
+
+const NONCE_LEN: usize = <XChaCha20Poly1305 as Aead>::NonceSize::USIZE;
+const TAG_LEN: usize = <XChaCha20Poly1305 as Aead>::TagSize::USIZE;
+
+pub fn pack(key: Key, compression_level: i32, reader: impl Read) -> Fallible<Vec<u8>> {
     let mut buf = encode_all(reader, compression_level)?;
 
-    let nonce = gen_nonce();
-    let tag = seal_detached(&mut buf, &nonce, key);
+    let mut nonce = Nonce::default();
+    SystemRandom::new()
+        .fill(&mut nonce)
+        .map_err(|_| "Failed to generate random nonce")?;
 
-    buf.reserve(NONCEBYTES + MACBYTES);
-    buf.extend_from_slice(nonce.as_ref());
-    buf.extend_from_slice(tag.as_ref());
+    let tag = XChaCha20Poly1305::new(key)
+        .encrypt_in_place_detached(&nonce, &[], &mut buf)
+        .map_err(|_| "Failed to encrypt buffer")?;
+
+    buf.reserve(NONCE_LEN + TAG_LEN);
+    buf.extend_from_slice(&nonce);
+    buf.extend_from_slice(&tag);
 
     Ok(buf)
 }
 
-pub fn unpack(key: &Key, mut buf: Vec<u8>) -> Fallible<impl Read> {
-    if buf.len() < MACBYTES + NONCEBYTES {
+pub fn unpack(key: Key, mut buf: Vec<u8>) -> Fallible<impl Read> {
+    if buf.len() < TAG_LEN + NONCE_LEN {
         return Err("Buffer too short".into());
     }
 
-    {
-        let buf = buf.as_mut_slice();
-        let (buf, tag) = buf.split_at_mut(buf.len() - MACBYTES);
-        let (buf, nonce) = buf.split_at_mut(buf.len() - NONCEBYTES);
+    let tag = Tag::clone_from_slice(&buf[buf.len() - TAG_LEN..]);
+    buf.truncate(buf.len() - TAG_LEN);
 
-        open_detached(
-            buf,
-            &Tag::from_slice(tag).unwrap(),
-            &Nonce::from_slice(nonce).unwrap(),
-            key,
-        )
-        .map_err(|()| "Failed to decrypt buffer")?;
-    }
+    let nonce = Nonce::clone_from_slice(&buf[buf.len() - NONCE_LEN..]);
+    buf.truncate(buf.len() - NONCE_LEN);
 
-    buf.truncate(buf.len() - MACBYTES - NONCEBYTES);
+    XChaCha20Poly1305::new(key)
+        .decrypt_in_place_detached(&nonce, &[], &mut buf, &tag)
+        .map_err(|_| "Failed to decrypt buffer")?;
 
-    Ok(Decoder::with_buffer(Cursor::new(buf))?)
+    let reader = Decoder::with_buffer(Cursor::new(buf))?;
+
+    Ok(reader)
 }

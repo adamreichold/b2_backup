@@ -23,7 +23,6 @@ mod manifest;
 mod pack;
 mod split;
 
-use std::convert::TryInto;
 use std::env::{args, current_dir};
 use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FmtResult};
@@ -38,17 +37,12 @@ use rayon::{
 };
 use serde::Deserialize;
 use serde_yaml::from_reader;
-use sodiumoxide::{crypto::secretbox::Key, hex};
 
-use self::{backup::backup, client::Client, manifest::Manifest};
+use self::{backup::backup, client::Client, manifest::Manifest, pack::Key};
 
 type Fallible<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 
 fn main() -> Fallible {
-    sodiumoxide::init().map_err(|()| "Failed to initialize libsodium")?;
-
-    let mut manifest = Manifest::open("manifest.db")?;
-
     let config: Config = from_reader(File::open("config.yaml")?)?;
 
     if let Some(num_threads) = config.num_threads {
@@ -58,6 +52,8 @@ fn main() -> Fallible {
     }
 
     let client = Client::new(&config)?;
+
+    let mut manifest = Manifest::open("manifest.db")?;
 
     let mut args = args();
 
@@ -132,12 +128,9 @@ pub struct Config {
 
 impl Config {
     fn key(&self) -> Fallible<Key> {
-        let key = hex::decode(&self.key)
-            .map_err(|()| "Failed to parse key")?
-            .as_slice()
-            .try_into()?;
-
-        Ok(Key(key))
+        let mut key = Key::default();
+        hex::decode_to_slice(&self.key, &mut key)?;
+        Ok(key)
     }
 
     fn def_keep_deleted_files() -> bool {

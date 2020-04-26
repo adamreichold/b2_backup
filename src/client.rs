@@ -23,9 +23,8 @@ use std::sync::Mutex;
 use std::thread::{current, sleep, ThreadId};
 use std::time::Duration;
 
-use openssl::sha::sha1;
+use ring::digest::{digest, SHA1_FOR_LEGACY_USE_ONLY};
 use serde::{Deserialize, Serialize};
-use sodiumoxide::{base64, crypto::secretbox::Key, hex};
 use zeptohttpc::{
     http::{
         header::{AUTHORIZATION, CONTENT_TYPE},
@@ -35,7 +34,7 @@ use zeptohttpc::{
 };
 
 use super::{
-    pack::{pack, unpack},
+    pack::{pack, unpack, Key},
     Bytes, Config, Fallible,
 };
 
@@ -55,10 +54,7 @@ impl<'a> Client<'a> {
                 AUTHORIZATION,
                 format!(
                     "Basic {}",
-                    base64::encode(
-                        format!("{}:{}", config.app_key_id, config.app_key),
-                        base64::Variant::Original,
-                    )
+                    base64::encode(format!("{}:{}", config.app_key_id, config.app_key))
                 ),
             )
             .empty()?
@@ -115,7 +111,7 @@ impl<'a> Client<'a> {
             .into());
         }
 
-        Ok(unpack(&self.key, resp.into_vec()?)?)
+        Ok(unpack(self.key, resp.into_vec()?)?)
     }
 
     pub fn remove(&self, name: &str, id: &str) -> Fallible {
@@ -214,7 +210,7 @@ impl<'a> Client<'a> {
     }
 
     pub fn upload(&self, name: &str, reader: impl Read) -> Fallible<(String, u64)> {
-        let buf = pack(&self.key, self.config.compression_level, reader)?;
+        let buf = pack(self.key, self.config.compression_level, reader)?;
 
         let thread_id = current().id();
 
@@ -302,7 +298,10 @@ impl Uploader {
             .header(AUTHORIZATION, &self.token)
             .header(CONTENT_TYPE, "application/octet-stream")
             .header("X-Bz-File-Name", name)
-            .header("X-Bz-Content-Sha1", hex::encode(sha1(buf)))
+            .header(
+                "X-Bz-Content-Sha1",
+                hex::encode(digest(&SHA1_FOR_LEGACY_USE_ONLY, buf).as_ref()),
+            )
             .from_mem(buf)?
             .send()?;
 

@@ -25,8 +25,8 @@ use std::os::unix::fs::{symlink as create_symlink, FileExt, PermissionsExt};
 use std::path::Path;
 use std::sync::Mutex;
 
+use blake2::{Blake2s, Digest};
 use lru_cache::LruCache;
-use openssl::sha::sha256;
 use rusqlite::{
     session::{Changegroup, ConflictAction, ConflictType, Session},
     Connection, TransactionBehavior,
@@ -428,7 +428,7 @@ pub fn store_block(
     offset: u64,
     block: &[u8],
 ) -> Fallible {
-    let digest = sha256(block);
+    let digest = Blake2s::digest(block);
 
     let archive_id;
     let archive_len;
