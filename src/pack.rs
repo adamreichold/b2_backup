@@ -38,7 +38,7 @@ type Tag = GenericArray<u8, <XChaCha20Poly1305 as Aead>::TagSize>;
 const NONCE_LEN: usize = <XChaCha20Poly1305 as Aead>::NonceSize::USIZE;
 const TAG_LEN: usize = <XChaCha20Poly1305 as Aead>::TagSize::USIZE;
 
-pub fn pack(key: Key, compression_level: i32, reader: impl Read) -> Fallible<Vec<u8>> {
+pub fn pack(key: Key, compression_level: i32, name: &str, reader: impl Read) -> Fallible<Vec<u8>> {
     let mut buf = encode_all(reader, compression_level)?;
 
     let mut nonce = Nonce::default();
@@ -47,7 +47,7 @@ pub fn pack(key: Key, compression_level: i32, reader: impl Read) -> Fallible<Vec
         .map_err(|_| "Failed to generate random nonce")?;
 
     let tag = XChaCha20Poly1305::new(key)
-        .encrypt_in_place_detached(&nonce, &[], &mut buf)
+        .encrypt_in_place_detached(&nonce, name.as_bytes(), &mut buf)
         .map_err(|_| "Failed to encrypt buffer")?;
 
     buf.reserve(NONCE_LEN + TAG_LEN);
@@ -57,7 +57,7 @@ pub fn pack(key: Key, compression_level: i32, reader: impl Read) -> Fallible<Vec
     Ok(buf)
 }
 
-pub fn unpack(key: Key, mut buf: Vec<u8>) -> Fallible<impl Read> {
+pub fn unpack(key: Key, name: &str, mut buf: Vec<u8>) -> Fallible<impl Read> {
     if buf.len() < TAG_LEN + NONCE_LEN {
         return Err("Buffer too short".into());
     }
@@ -69,7 +69,7 @@ pub fn unpack(key: Key, mut buf: Vec<u8>) -> Fallible<impl Read> {
     buf.truncate(buf.len() - NONCE_LEN);
 
     XChaCha20Poly1305::new(key)
-        .decrypt_in_place_detached(&nonce, &[], &mut buf, &tag)
+        .decrypt_in_place_detached(&nonce, name.as_bytes(), &mut buf, &tag)
         .map_err(|_| "Failed to decrypt buffer")?;
 
     let reader = Decoder::with_buffer(Cursor::new(buf))?;

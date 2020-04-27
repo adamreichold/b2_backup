@@ -111,7 +111,7 @@ impl<'a> Client<'a> {
             .into());
         }
 
-        Ok(unpack(self.key, resp.into_vec()?)?)
+        Ok(unpack(self.key, name, resp.into_vec()?)?)
     }
 
     pub fn remove(&self, name: &str, id: &str) -> Fallible {
@@ -210,7 +210,7 @@ impl<'a> Client<'a> {
     }
 
     pub fn upload(&self, name: &str, reader: impl Read) -> Fallible<(String, u64)> {
-        let buf = pack(self.key, self.config.compression_level, reader)?;
+        let buf = pack(self.key, self.config.compression_level, name, reader)?;
 
         let thread_id = current().id();
 
