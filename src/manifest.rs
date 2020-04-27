@@ -18,7 +18,8 @@ along with b2_backup.  If not, see <https://www.gnu.org/licenses/>.
 */
 use std::collections::{BTreeMap, HashSet};
 use std::convert::TryInto;
-use std::fs::{create_dir_all, File, Metadata, Permissions};
+use std::env::set_current_dir;
+use std::fs::{create_dir_all, set_permissions, File, Metadata, OpenOptions, Permissions};
 use std::io::{copy, Read, Seek, SeekFrom, Write};
 use std::mem::replace;
 use std::os::unix::fs::{symlink as create_symlink, FileExt, PermissionsExt};
@@ -26,7 +27,6 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use blake2::{Blake2s, Digest};
-use lru_cache::LruCache;
 use rusqlite::{
     session::{Changegroup, ConflictAction, ConflictType, Session},
     Connection, TransactionBehavior,
@@ -35,13 +35,15 @@ use tempfile::tempfile;
 
 use super::{
     client::Client,
+    copy_file_range_full,
     database::{
         clear_tables, delete_archive, delete_mappings, delete_new_file, delete_patchset,
         delete_unused_blocks, delete_unvisited_files, delete_visited_files, insert_block,
         insert_def_archive, insert_def_patchset, insert_file, insert_mappings, insert_new_file,
         insert_new_mapping, insert_patchset, insert_visited_file, open_connection, select_archive,
-        select_block, select_blocks_by_archive, select_blocks_by_file, select_closed_new_files,
-        select_file, select_files_by_path, select_patchset, select_small_archives,
+        select_archives_by_path, select_block, select_blocks_by_archive, select_blocks_by_file,
+        select_closed_new_files, select_file, select_files_by_path,
+        select_files_by_path_and_archive, select_patchset, select_small_archives,
         select_small_patchsets, select_storage_used, select_unused_archives, update_archive,
         update_block, update_file, update_new_file, update_patchset,
     },
@@ -268,6 +270,7 @@ impl Manifest {
                 select_blocks_by_file(
                     &trans,
                     file_id,
+                    None,
                     |_length, archive_id, _archive_off, _offset| {
                         archives.insert(archive_id);
                         blocks += 1;
@@ -293,62 +296,75 @@ impl Manifest {
 
     pub fn restore_files(
         &mut self,
-        config: &Config,
         client: &Client,
         path_filter: Option<&str>,
-        target: &Path,
+        target: Option<&Path>,
     ) -> Fallible {
-        let mut archives = LruCache::new(config.archive_cache_cap);
-        let mut buffer = Vec::new();
-
-        let trans = self.conn.transaction()?;
-
-        select_files_by_path(&trans, path_filter, |file_id, path, size, mode, symlink| {
-            println!("Restoring {}...", path.display());
-
-            let path = target.join(path.strip_prefix("/")?);
-
-            if let Some(parent) = path.parent() {
+        if let Some(target) = target {
+            if let Some(parent) = target.parent() {
                 create_dir_all(parent)?;
             }
 
-            if let Some(symlink) = symlink {
-                create_symlink(symlink, path)?;
+            set_current_dir(target)?;
+        }
 
-                return Ok(());
-            }
+        let trans = self.conn.transaction()?;
 
-            let file = File::create(path)?;
-            file.set_len(size)?;
+        select_files_by_path(
+            &trans,
+            path_filter,
+            |_file_id, path, size, _mode, symlink| {
+                let path = path.strip_prefix("/")?;
 
-            select_blocks_by_file(
-                &trans,
-                file_id,
-                |length, archive_id, archive_off, offset| {
-                    let archive = match archives.get_mut(&archive_id) {
-                        Some(archive) => archive,
-                        None => {
-                            let name = format!("archive_{}", archive_id);
-                            let mut archive = tempfile()?;
-                            copy(&mut client.download(&name)?, &mut archive)?;
+                if let Some(parent) = path.parent() {
+                    create_dir_all(parent)?;
+                }
 
-                            archives.insert(archive_id, archive);
-                            archives.get_mut(&archive_id).unwrap()
-                        }
-                    };
+                if symlink.is_none() {
+                    File::create(path)?.set_len(size)?;
+                }
 
-                    buffer.resize(length.try_into().unwrap(), 0);
-                    archive.read_exact_at(&mut buffer, archive_off)?;
-                    file.write_all_at(&buffer, offset)?;
+                Ok(())
+            },
+        )?;
 
-                    Ok(())
-                },
-            )?;
+        select_archives_by_path(&trans, path_filter, |archive_id| {
+            let name = format!("archive_{}", archive_id);
+            let mut archive = tempfile()?;
+            copy(&mut client.download(&name)?, &mut archive)?;
 
-            file.set_permissions(Permissions::from_mode(mode))?;
+            select_files_by_path_and_archive(&trans, path_filter, archive_id, |file_id, path| {
+                println!("Restoring {}...", path.display());
 
-            Ok(())
-        })
+                let path = path.strip_prefix("/")?;
+                let file = OpenOptions::new().write(true).open(path)?;
+
+                select_blocks_by_file(
+                    &trans,
+                    file_id,
+                    Some(archive_id),
+                    |length, _archive_id, archive_off, offset| {
+                        copy_file_range_full(&archive, archive_off, &file, offset, length)
+                    },
+                )
+            })
+        })?;
+
+        select_files_by_path(
+            &trans,
+            path_filter,
+            |_file_id, path, _size, mode, symlink| {
+                let path = path.strip_prefix("/")?;
+
+                if let Some(symlink) = symlink {
+                    create_symlink(symlink, path)?;
+                } else {
+                    set_permissions(path, Permissions::from_mode(mode))?;
+                }
+
+                Ok(())
+            },
+        )
     }
 
     pub fn purge_storage(&mut self, client: &Client) -> Fallible {

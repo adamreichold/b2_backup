@@ -23,14 +23,23 @@ mod manifest;
 mod pack;
 mod split;
 
-use std::env::{args, current_dir};
+use std::convert::TryInto;
+use std::env::args;
 use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::fs::File;
+use std::io::{Error as IoError, ErrorKind as IoErrorKind};
+use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use libc::{c_int, sighandler_t, signal, SIGINT, SIG_ERR};
+use nix::{
+    errno::Errno,
+    fcntl::copy_file_range,
+    libc::c_int,
+    sys::signal::{signal, SigHandler, Signal},
+    Error as NixError,
+};
 use rayon::{
     iter::{IntoParallelRefIterator, ParallelIterator},
     ThreadPoolBuilder,
@@ -71,13 +80,9 @@ fn main() -> Fallible {
         Some("restore-manifest") => manifest.restore(&client),
         Some("list-files") => manifest.list_files(args.next().as_deref()),
         Some("restore-files") => manifest.restore_files(
-            &config,
             &client,
             args.next().as_deref(),
-            &args
-                .next()
-                .map(|arg| Ok(arg.into()))
-                .unwrap_or_else(current_dir)?,
+            args.next().map(PathBuf::from).as_deref(),
         ),
         Some("purge-storage") => manifest.purge_storage(&client),
         Some(arg) => Err(format!("Unexpected argument {}", arg).into()),
@@ -85,14 +90,12 @@ fn main() -> Fallible {
 }
 
 fn install_interrupt_handler() -> Fallible {
-    extern "C" fn interrupt(_signum: c_int) {
+    extern "C" fn handler(_signum: c_int) {
         INTERRUPTED.store(true, Ordering::SeqCst);
     }
 
     unsafe {
-        if signal(SIGINT, interrupt as extern "C" fn(c_int) as sighandler_t) == SIG_ERR {
-            return Err("Failed to install signal handler".into());
-        }
+        signal(Signal::SIGINT, SigHandler::Handler(handler))?;
     }
 
     Ok(())
@@ -103,6 +106,26 @@ fn was_interrupted() -> bool {
 }
 
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
+fn copy_file_range_full(from: &File, from_off: u64, to: &File, to_off: u64, len: u64) -> Fallible {
+    let from = from.as_raw_fd();
+    let to = to.as_raw_fd();
+
+    let mut from_off = from_off.try_into().unwrap();
+    let mut to_off = to_off.try_into().unwrap();
+    let mut len = len.try_into().unwrap();
+
+    while len != 0 {
+        match copy_file_range(from, Some(&mut from_off), to, Some(&mut to_off), len) {
+            Ok(0) => return Err(IoError::from(IoErrorKind::WriteZero).into()),
+            Ok(written) => len -= written,
+            Err(NixError::Sys(Errno::EINTR)) => (),
+            Err(err) => return Err(err.into()),
+        }
+    }
+
+    Ok(())
+}
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -122,8 +145,6 @@ pub struct Config {
     min_archive_len: u64,
     #[serde(default = "Config::def_max_manifest_len")]
     max_manifest_len: u64,
-    #[serde(default = "Config::def_archive_cache_cap")]
-    archive_cache_cap: usize,
 }
 
 impl Config {
@@ -147,10 +168,6 @@ impl Config {
 
     fn def_max_manifest_len() -> u64 {
         10_000_000
-    }
-
-    fn def_archive_cache_cap() -> usize {
-        20
     }
 }
 

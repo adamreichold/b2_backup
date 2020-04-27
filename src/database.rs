@@ -204,6 +204,31 @@ pub fn delete_archive(conn: &Connection, archive_id: i64) -> Fallible {
     Ok(())
 }
 
+pub fn select_archives_by_path(
+    conn: &Connection,
+    path_filter: Option<&str>,
+    mut consumer: impl FnMut(i64) -> Fallible,
+) -> Fallible {
+    let mut stmt = conn.prepare(
+        r#"
+SELECT DISTINCT blocks.archive_id
+FROM files, mappings, blocks
+WHERE files.id = mappings.file_id
+AND mappings.block_id = blocks.id
+AND IFNULL(files.path GLOB ?, TRUE)
+"#,
+    )?;
+
+    let mut rows = stmt.query(params![path_filter])?;
+    while let Some(row) = rows.next()? {
+        let archive_id = row.get(0)?;
+
+        consumer(archive_id)?;
+    }
+
+    Ok(())
+}
+
 pub fn select_file(conn: &Connection, path: &Path) -> Fallible<Option<i64>> {
     let mut stmt = conn.prepare_cached("SELECT id FROM files WHERE path = ?")?;
 
@@ -257,16 +282,49 @@ pub fn select_files_by_path(
 
     let mut rows = stmt.query(params![path_filter])?;
     while let Some(row) = rows.next()? {
-        let file_id: i64 = row.get(0)?;
+        let file_id = row.get(0)?;
         let path = Path::new(OsStr::from_bytes(row.get_raw(1).as_blob()?));
         let size = row.get_raw(2).as_i64()? as u64;
-        let mode: u32 = row.get(3)?;
+        let mode = row.get(3)?;
         let symlink = match row.get_raw(4) {
             ValueRef::Null => None,
             value => Some(Path::new(OsStr::from_bytes(value.as_blob()?))),
         };
 
         consumer(file_id, path, size, mode, symlink)?;
+    }
+
+    Ok(())
+}
+
+pub fn select_files_by_path_and_archive(
+    conn: &Connection,
+    path_filter: Option<&str>,
+    archive_id: i64,
+    mut consumer: impl FnMut(i64, &Path) -> Fallible,
+) -> Fallible {
+    let mut stmt = conn.prepare(
+        r#"
+SELECT
+    id,
+    path
+FROM files
+WHERE IFNULL(path GLOB ?, TRUE)
+AND id IN (
+    SELECT mappings.file_id
+    FROM mappings, blocks
+    WHERE mappings.block_id = blocks.id
+    AND blocks.archive_id = ?
+)
+"#,
+    )?;
+
+    let mut rows = stmt.query(params![path_filter, archive_id])?;
+    while let Some(row) = rows.next()? {
+        let file_id = row.get(0)?;
+        let path = Path::new(OsStr::from_bytes(row.get_raw(1).as_blob()?));
+
+        consumer(file_id, path)?;
     }
 
     Ok(())
@@ -342,6 +400,7 @@ pub fn select_blocks_by_archive(
 pub fn select_blocks_by_file(
     conn: &Connection,
     file_id: i64,
+    archive_id: Option<i64>,
     mut consumer: impl FnMut(u64, i64, u64, u64) -> Fallible,
 ) -> Fallible {
     let mut stmt = conn.prepare_cached(
@@ -354,14 +413,15 @@ SELECT
 FROM mappings, blocks
 WHERE mappings.block_id = blocks.id
 AND mappings.file_id = ?
+AND IFNULL(blocks.archive_id = ?, TRUE)
 ORDER BY blocks.archive_id ASC, blocks.archive_off ASC, mappings.offset ASC
 "#,
     )?;
 
-    let mut rows = stmt.query(params![file_id])?;
+    let mut rows = stmt.query(params![file_id, archive_id])?;
     while let Some(row) = rows.next()? {
         let length = row.get_raw(0).as_i64()? as u64;
-        let archive_id: i64 = row.get(1)?;
+        let archive_id = row.get(1)?;
         let archive_off = row.get_raw(2).as_i64()? as u64;
         let offset = row.get_raw(3).as_i64()? as u64;
 
@@ -538,7 +598,7 @@ AND NOT EXISTS (
 
     let mut rows = stmt.query(NO_PARAMS)?;
     while let Some(row) = rows.next()? {
-        let new_file_id: i64 = row.get(0)?;
+        let new_file_id = row.get(0)?;
         let path = Path::new(OsStr::from_bytes(row.get_raw(1).as_blob()?));
 
         consumer(new_file_id, path)?;
