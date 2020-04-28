@@ -23,33 +23,34 @@ use super::Fallible;
 
 pub fn split(mut reader: impl Read, mut consumer: impl FnMut(&[u8]) -> Fallible) -> Fallible {
     let mut buf = Vec::new();
+    let mut start = 0;
     let mut sum = RollingSum::new();
 
     loop {
-        let mut len = buf.len();
-        buf.resize(len + CHUNK_SIZE as usize, 0);
-        let read = reader.read(&mut buf[len..])?;
-        buf.truncate(len + read);
+        let mut end = buf.len() - start;
+        buf.copy_within(start.., 0);
+        start = 0;
+
+        buf.resize(end + 1536 * 1024, 0);
+        let read = reader.read(&mut buf[end..])?;
+        buf.truncate(end + read);
 
         if read == 0 {
             break;
         }
 
-        while let Some(pos) = sum.split(&buf[len..]) {
-            len += pos;
+        while let Some(pos) = sum.split(&buf[end..]) {
+            end += pos;
 
-            consumer(&buf[..len])?;
+            consumer(&buf[start..end])?;
 
-            buf.copy_within(len.., 0);
-            buf.truncate(buf.len() - len);
-
+            start = end;
             sum = RollingSum::new();
-            len = 0;
         }
     }
 
-    if !buf.is_empty() {
-        consumer(&buf)?;
+    if buf.len() > start {
+        consumer(&buf[start..])?;
     }
 
     Ok(())
