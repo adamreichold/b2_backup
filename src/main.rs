@@ -24,15 +24,15 @@ mod pack;
 mod split;
 
 use std::convert::TryInto;
-use std::env::args;
 use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::fs::File;
 use std::io::{Error as IoError, ErrorKind as IoErrorKind};
 use std::os::unix::io::AsRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use clap::{App, Arg, ArgMatches, SubCommand};
 use nix::{
     errno::Errno,
     fcntl::copy_file_range,
@@ -52,40 +52,42 @@ use self::{backup::backup, client::Client, manifest::Manifest, pack::Key};
 type Fallible<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 
 fn main() -> Fallible {
-    let config: Config = from_reader(File::open("config.yaml")?)?;
+    let opts = parse_opts();
 
-    if let Some(num_threads) = config.num_threads {
-        ThreadPoolBuilder::new()
-            .num_threads(num_threads)
-            .build_global()?;
-    }
+    let config = Config::parse(opts.value_of_os("config").unwrap())?;
 
     let client = Client::new(&config)?;
 
     let mut manifest = Manifest::open("manifest.db")?;
 
-    let mut args = args();
-
-    match args.nth(1).as_deref() {
-        None | Some("backup") => manifest.update(config.keep_deleted_files, &client, |update| {
+    match opts.subcommand() {
+        ("", _) | ("backup", _) => manifest.update(config.keep_deleted_files, &client, |update| {
             install_interrupt_handler()?;
+
+            if let Some(num_threads) = config.num_threads {
+                ThreadPoolBuilder::new()
+                    .num_threads(num_threads)
+                    .build_global()?;
+            }
 
             config
                 .includes
                 .par_iter()
-                .try_for_each(|path| backup(&config, &client, update, &config.excludes, path))
+                .try_for_each(|path| backup(&config, &client, update, path))
         }),
-        Some("collect-small-archives") => manifest.collect_small_archives(&config, &client),
-        Some("collect-small-patchsets") => manifest.collect_small_patchsets(&config, &client),
-        Some("restore-manifest") => manifest.restore(&client),
-        Some("list-files") => manifest.list_files(args.next().as_deref()),
-        Some("restore-files") => manifest.restore_files(
+        ("collect-small-archives", _) => manifest.collect_small_archives(&config, &client),
+        ("collect-small-patchsets", _) => manifest.collect_small_patchsets(&config, &client),
+        ("list-files", Some(args)) => {
+            manifest.list_files(args.value_of_os("filter").as_deref().map(Path::new))
+        }
+        ("restore-files", Some(args)) => manifest.restore_files(
             &client,
-            args.next().as_deref(),
-            args.next().map(PathBuf::from).as_deref(),
+            args.value_of_os("filter").as_deref().map(Path::new),
+            args.value_of_os("target_dir").as_deref().map(Path::new),
         ),
-        Some("purge-storage") => manifest.purge_storage(&client),
-        Some(arg) => Err(format!("Unexpected argument {}", arg).into()),
+        ("restore-manifest", _) => manifest.restore_manifest(&client),
+        ("purge-storage", _) => manifest.purge_storage(&client),
+        (cmd, _) => Err(format!("Unexpected subcommand {}", cmd).into()),
     }
 }
 
@@ -127,6 +129,31 @@ fn copy_file_range_full(from: &File, from_off: u64, to: &File, to_off: u64, len:
     Ok(())
 }
 
+fn parse_opts() -> ArgMatches<'static> {
+    App::new(env!("CARGO_PKG_NAME"))
+        .arg(
+            Arg::with_name("config")
+                .long("config")
+                .default_value("config.yaml"),
+        )
+        .subcommand(SubCommand::with_name("backup"))
+        .subcommand(SubCommand::with_name("collect-small-archives"))
+        .subcommand(SubCommand::with_name("collect-small-patchsets"))
+        .subcommand(SubCommand::with_name("list-files").arg(Arg::with_name("filter")))
+        .subcommand(
+            SubCommand::with_name("restore-files")
+                .arg(Arg::with_name("filter"))
+                .arg(
+                    Arg::with_name("target-dir")
+                        .long("target-dir")
+                        .takes_value(true),
+                ),
+        )
+        .subcommand(SubCommand::with_name("restore-manifest"))
+        .subcommand(SubCommand::with_name("purge-storage"))
+        .get_matches()
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Config {
     app_key_id: String,
@@ -148,6 +175,11 @@ pub struct Config {
 }
 
 impl Config {
+    fn parse(path: impl AsRef<Path>) -> Fallible<Self> {
+        let config = from_reader(File::open(path)?)?;
+        Ok(config)
+    }
+
     fn key(&self) -> Fallible<Key> {
         let mut key = Key::default();
         hex::decode_to_slice(&self.key, &mut key)?;

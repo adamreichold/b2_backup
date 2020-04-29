@@ -19,7 +19,7 @@ along with b2_backup.  If not, see <https://www.gnu.org/licenses/>.
 use std::convert::TryFrom;
 use std::fs::{File, Metadata};
 use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
@@ -45,14 +45,17 @@ pub fn backup(
     config: &Config,
     client: &Client,
     update: &Mutex<Update<'_>>,
-    excludes: &[PathBuf],
     path: &Path,
 ) -> Fallible {
     if was_interrupted() {
         return Ok(());
     }
 
-    if let Some(exclude) = excludes.iter().find(|exclude| path.starts_with(exclude)) {
+    if let Some(exclude) = config
+        .excludes
+        .iter()
+        .find(|exclude| path.starts_with(exclude))
+    {
         println!(
             "Skipping {} due to exclude {}",
             path.display(),
@@ -65,11 +68,11 @@ pub fn backup(
     let file_type = metadata.file_type();
 
     if file_type.is_dir() {
-        backup_dir(config, client, update, excludes, &path)?;
+        backup_dir(config, client, update, &path, &metadata)?;
     } else if file_type.is_file() {
         backup_file(config, client, update, &path, &metadata)?;
     } else if file_type.is_symlink() {
-        backup_symlink(update, &path, &metadata)?;
+        backup_symlink(update, &path)?;
     } else {
         eprintln!(
             "Skipping {} as it does not appear to be a regular file",
@@ -84,10 +87,12 @@ fn backup_dir(
     config: &Config,
     client: &Client,
     update: &Mutex<Update<'_>>,
-    excludes: &[PathBuf],
     path: &Path,
+    metadata: &Metadata,
 ) -> Fallible {
     let dir = try_not_found!(path.read_dir());
+
+    update.lock().unwrap().directory(path, metadata)?;
 
     let paths = dir
         .map(|entry| entry.map(|entry| entry.path()))
@@ -95,7 +100,7 @@ fn backup_dir(
 
     paths
         .par_iter()
-        .try_for_each(|path| backup(config, client, update, excludes, &path))
+        .try_for_each(|path| backup(config, client, update, &path))
 }
 
 fn backup_file(
@@ -107,7 +112,7 @@ fn backup_file(
 ) -> Fallible {
     let file = try_not_found!(File::open(path));
 
-    let new_file_id = update.lock().unwrap().open_file(path, &metadata, None)?;
+    let new_file_id = update.lock().unwrap().open_file(path, metadata)?;
 
     let mut offset = 0;
 
@@ -124,12 +129,10 @@ fn backup_file(
     Ok(())
 }
 
-fn backup_symlink(update: &Mutex<Update<'_>>, path: &Path, metadata: &Metadata) -> Fallible {
-    let symlink = try_not_found!(path.read_link());
+fn backup_symlink(update: &Mutex<Update<'_>>, path: &Path) -> Fallible {
+    let target = try_not_found!(path.read_link());
 
-    let update = update.lock().unwrap();
-    let new_file_id = update.open_file(path, &metadata, Some(&symlink))?;
-    update.close_file(new_file_id)?;
+    update.lock().unwrap().symlink(path, &target)?;
 
     Ok(())
 }

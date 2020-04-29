@@ -21,7 +21,11 @@ use std::fs::Metadata;
 use std::os::unix::{ffi::OsStrExt, fs::MetadataExt};
 use std::path::Path;
 
-use rusqlite::{params, types::ValueRef, Connection, OptionalExtension, NO_PARAMS};
+use rusqlite::{
+    params,
+    types::{FromSqlError, ValueRef},
+    Connection, OptionalExtension, NO_PARAMS,
+};
 
 use super::Fallible;
 
@@ -49,8 +53,19 @@ CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY,
     path BLOB NOT NULL UNIQUE,
     size INTEGER NOT NULL,
-    mode INTEGER NOT NULL,
-    symlink BLOB
+    mode INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS directories (
+    id INTEGER PRIMARY KEY,
+    path BLOB NOT NULL UNIQUE,
+    mode INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS symbolic_links (
+    id INTEGER PRIMARY KEY,
+    path BLOB NOT NULL UNIQUE,
+    target BLOB NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS blocks (
@@ -77,12 +92,19 @@ CREATE TEMPORARY TABLE visited_files (
     file_id INTEGER PIMARY KEY
 );
 
+CREATE TEMPORARY TABLE visited_directories (
+    directory_id INTEGER PIMARY KEY
+);
+
+CREATE TEMPORARY TABLE visited_symbolic_links (
+    symbolic_link_id INTEGER PIMARY KEY
+);
+
 CREATE TEMPORARY TABLE new_files (
     id INTEGER PRIMARY KEY,
     path BLOB NOT NULL UNIQUE,
     size INTEGER NOT NULL,
     mode INTEGER NOT NULL,
-    symlink BLOB,
     closed INTEGER NOT NULL DEFAULT FALSE
 );
 
@@ -98,6 +120,8 @@ COMMIT;
 "#,
     )?;
 
+    conn.set_prepared_statement_cache_capacity(32);
+
     Ok(conn)
 }
 
@@ -106,6 +130,8 @@ pub fn clear_tables(conn: &Connection) -> Fallible {
         r#"
 DELETE FROM mappings;
 DELETE FROM blocks;
+DELETE FROM symbolic_links;
+DELETE FROM directories;
 DELETE FROM files;
 DELETE FROM archives;
 DELETE FROM patchsets;
@@ -206,7 +232,7 @@ pub fn delete_archive(conn: &Connection, archive_id: i64) -> Fallible {
 
 pub fn select_archives_by_path(
     conn: &Connection,
-    path_filter: Option<&str>,
+    path_filter: Option<&Path>,
     mut consumer: impl FnMut(i64) -> Fallible,
 ) -> Fallible {
     let mut stmt = conn.prepare(
@@ -219,7 +245,7 @@ AND IFNULL(files.path GLOB ?, TRUE)
 "#,
     )?;
 
-    let mut rows = stmt.query(params![path_filter])?;
+    let mut rows = stmt.query(params![path_filter.map(path_as_bytes)])?;
     while let Some(row) = rows.next()? {
         let archive_id = row.get(0)?;
 
@@ -233,15 +259,16 @@ pub fn select_file(conn: &Connection, path: &Path) -> Fallible<Option<i64>> {
     let mut stmt = conn.prepare_cached("SELECT id FROM files WHERE path = ?")?;
 
     let file_id = stmt
-        .query_row(params![path.as_os_str().as_bytes()], |row| row.get(0))
+        .query_row(params![path_as_bytes(path)], |row| row.get(0))
         .optional()?;
 
     Ok(file_id)
 }
 
 pub fn insert_file(conn: &Connection, new_file_id: i64) -> Fallible<i64> {
-    let mut stmt =
-            conn.prepare_cached("INSERT INTO files (path, size, mode, symlink) SELECT path, size, mode, symlink FROM new_files WHERE id = ?")?;
+    let mut stmt = conn.prepare_cached(
+        "INSERT INTO files (path, size, mode) SELECT path, size, mode FROM new_files WHERE id = ?",
+    )?;
 
     stmt.execute(params![new_file_id])?;
     let file_id = conn.last_insert_rowid();
@@ -250,48 +277,39 @@ pub fn insert_file(conn: &Connection, new_file_id: i64) -> Fallible<i64> {
 }
 
 pub fn update_file(conn: &Connection, file_id: i64, new_file_id: i64) -> Fallible {
-    let mut stmt = conn.prepare_cached(
-        r#"
-WITH new_file AS (
-    SELECT size, mode, symlink
-    FROM new_files
-    WHERE id = ?
-)
-UPDATE files
-SET
-    size = (SELECT size FROM new_file),
-    mode = (SELECT mode FROM new_file),
-    symlink = (SELECT symlink FROM new_file)
-WHERE id = ?
-"#,
-    )?;
+    let mut stmt = conn.prepare_cached("SELECT size, mode FROM new_files WHERE id = ?")?;
 
-    stmt.execute(params![new_file_id, file_id])?;
+    let mut rows = stmt.query(params![new_file_id])?;
+    let row = rows
+        .next()?
+        .ok_or_else(|| format!("Invalid new file ID {}", new_file_id))?;
+
+    let size = row.get_raw(0).as_i64()?;
+    let mode = row.get_raw(1).as_i64()?;
+
+    let mut stmt = conn.prepare_cached("UPDATE files SET size = ?, mode = ? WHERE id = ?")?;
+
+    stmt.execute(params![size, mode, file_id])?;
 
     Ok(())
 }
 
 pub fn select_files_by_path(
     conn: &Connection,
-    path_filter: Option<&str>,
-    mut consumer: impl FnMut(i64, &Path, u64, u32, Option<&Path>) -> Fallible,
+    path_filter: Option<&Path>,
+    mut consumer: impl FnMut(i64, &Path, u64, u32) -> Fallible,
 ) -> Fallible {
-    let mut stmt = conn.prepare(
-        "SELECT id, path, size, mode, symlink FROM files WHERE IFNULL(path GLOB ?, TRUE)",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT id, path, size, mode FROM files WHERE IFNULL(path GLOB ?, TRUE)")?;
 
-    let mut rows = stmt.query(params![path_filter])?;
+    let mut rows = stmt.query(params![path_filter.map(path_as_bytes)])?;
     while let Some(row) = rows.next()? {
         let file_id = row.get(0)?;
-        let path = Path::new(OsStr::from_bytes(row.get_raw(1).as_blob()?));
+        let path = path_from_blob(row.get_raw(1))?;
         let size = row.get_raw(2).as_i64()? as u64;
         let mode = row.get(3)?;
-        let symlink = match row.get_raw(4) {
-            ValueRef::Null => None,
-            value => Some(Path::new(OsStr::from_bytes(value.as_blob()?))),
-        };
 
-        consumer(file_id, path, size, mode, symlink)?;
+        consumer(file_id, path, size, mode)?;
     }
 
     Ok(())
@@ -299,7 +317,7 @@ pub fn select_files_by_path(
 
 pub fn select_files_by_path_and_archive(
     conn: &Connection,
-    path_filter: Option<&str>,
+    path_filter: Option<&Path>,
     archive_id: i64,
     mut consumer: impl FnMut(i64, &Path) -> Fallible,
 ) -> Fallible {
@@ -319,12 +337,105 @@ AND id IN (
 "#,
     )?;
 
-    let mut rows = stmt.query(params![path_filter, archive_id])?;
+    let mut rows = stmt.query(params![path_filter.map(path_as_bytes), archive_id])?;
     while let Some(row) = rows.next()? {
         let file_id = row.get(0)?;
-        let path = Path::new(OsStr::from_bytes(row.get_raw(1).as_blob()?));
+        let path = path_from_blob(row.get_raw(1))?;
 
         consumer(file_id, path)?;
+    }
+
+    Ok(())
+}
+
+pub fn select_directory(conn: &Connection, path: &Path) -> Fallible<Option<i64>> {
+    let mut stmt = conn.prepare_cached("SELECT id FROM directories WHERE path = ?")?;
+
+    let directory_id = stmt
+        .query_row(params![path_as_bytes(path)], |row| row.get(0))
+        .optional()?;
+
+    Ok(directory_id)
+}
+
+pub fn insert_directory(conn: &Connection, path: &Path, metadata: &Metadata) -> Fallible<i64> {
+    let mut stmt = conn.prepare_cached("INSERT INTO directories (path, mode) VALUES (?, ?)")?;
+
+    stmt.execute(params![path_as_bytes(path), metadata.mode()])?;
+    let directory_id = conn.last_insert_rowid();
+
+    Ok(directory_id)
+}
+
+pub fn update_directory(conn: &Connection, directory_id: i64, metadata: &Metadata) -> Fallible {
+    let mut stmt = conn.prepare_cached("UPDATE directories SET mode = ? WHERE id = ?")?;
+
+    stmt.execute(params![metadata.mode(), directory_id])?;
+
+    Ok(())
+}
+
+pub fn select_directories_by_path(
+    conn: &Connection,
+    path_filter: Option<&Path>,
+    mut consumer: impl FnMut(&Path, u32) -> Fallible,
+) -> Fallible {
+    let mut stmt =
+        conn.prepare("SELECT path, mode FROM directories WHERE IFNULL(path GLOB ?, TRUE)")?;
+
+    let mut rows = stmt.query(params![path_filter.map(path_as_bytes)])?;
+    while let Some(row) = rows.next()? {
+        let path = path_from_blob(row.get_raw(0))?;
+        let mode = row.get(1)?;
+
+        consumer(path, mode)?;
+    }
+
+    Ok(())
+}
+
+pub fn select_symbolic_link(conn: &Connection, path: &Path) -> Fallible<Option<i64>> {
+    let mut stmt = conn.prepare_cached("SELECT id FROM symbolic_links WHERE path = ?")?;
+
+    let symbolic_link_id = stmt
+        .query_row(params![path_as_bytes(path)], |row| row.get(0))
+        .optional()?;
+
+    Ok(symbolic_link_id)
+}
+
+pub fn insert_symbolic_link(conn: &Connection, path: &Path, target: &Path) -> Fallible<i64> {
+    let mut stmt =
+        conn.prepare_cached("INSERT INTO symbolic_links (path, target) VALUES (?, ?)")?;
+
+    stmt.execute(params![path_as_bytes(path), path_as_bytes(target)])?;
+    let symbolic_link_id = conn.last_insert_rowid();
+
+    Ok(symbolic_link_id)
+}
+
+pub fn update_symbolic_link(conn: &Connection, symbolic_link_id: i64, target: &Path) -> Fallible {
+    let mut stmt = conn.prepare_cached("UPDATE symbolic_links SET target = ? WHERE id = ?")?;
+
+    stmt.execute(params![path_as_bytes(target), symbolic_link_id])?;
+
+    Ok(())
+}
+
+pub fn select_symbolic_links_by_path(
+    conn: &Connection,
+    path_filter: Option<&Path>,
+    mut consumer: impl FnMut(&Path, &Path) -> Fallible,
+) -> Fallible {
+    let mut stmt =
+        conn.prepare("SELECT path, target FROM symbolic_links WHERE IFNULL(path GLOB ?, TRUE)")?;
+
+    let mut rows = stmt.query(params![path_filter.map(path_as_bytes)])?;
+    while let Some(row) = rows.next()? {
+        let path = path_from_blob(row.get_raw(0))?;
+        let target = path_from_blob(row.get_raw(1))?;
+
+        consumer(path, target)?;
     }
 
     Ok(())
@@ -455,26 +566,46 @@ pub fn insert_visited_file(conn: &Connection, file_id: i64) -> Fallible {
     Ok(())
 }
 
-pub fn delete_visited_files(conn: &Connection) -> Fallible {
-    conn.execute("DELETE FROM visited_files", NO_PARAMS)?;
+pub fn insert_visited_directory(conn: &Connection, directory_id: i64) -> Fallible {
+    let mut stmt =
+        conn.prepare_cached("INSERT INTO visited_directories (directory_id) VALUES (?)")?;
+
+    stmt.execute(params![directory_id])?;
 
     Ok(())
 }
 
-pub fn insert_new_file(
-    conn: &Connection,
-    path: &Path,
-    metadata: &Metadata,
-    symlink: Option<&Path>,
-) -> Fallible<i64> {
-    let mut stmt = conn
-        .prepare_cached("INSERT INTO new_files (path, size, mode, symlink) VALUES (?, ?, ?, ?)")?;
+pub fn insert_visited_symbolic_link(conn: &Connection, symbolic_link_id: i64) -> Fallible {
+    let mut stmt =
+        conn.prepare_cached("INSERT INTO visited_symbolic_links (symbolic_link_id) VALUES (?)")?;
+
+    stmt.execute(params![symbolic_link_id])?;
+
+    Ok(())
+}
+
+pub fn delete_visited_objects(conn: &Connection) -> Fallible {
+    conn.execute_batch(
+        r#"
+DELETE FROM visited_symbolic_links;
+DELETE FROM visited_directories;
+DELETE FROM visited_files;
+DELETE FROM new_mappings;
+DELETE FROM new_files;
+"#,
+    )?;
+
+    Ok(())
+}
+
+pub fn insert_new_file(conn: &Connection, path: &Path, metadata: &Metadata) -> Fallible<i64> {
+    let mut stmt =
+        conn.prepare_cached("INSERT INTO new_files (path, size, mode) VALUES (?, ?, ?)")?;
 
     stmt.execute(params![
-        path.as_os_str().as_bytes(),
+        path_as_bytes(path),
         metadata.size() as i64,
         metadata.mode(),
-        symlink.map(|symlink| symlink.as_os_str().as_bytes()),
     ])?;
     let new_file_id = conn.last_insert_rowid();
 
@@ -599,7 +730,7 @@ AND NOT EXISTS (
     let mut rows = stmt.query(NO_PARAMS)?;
     while let Some(row) = rows.next()? {
         let new_file_id = row.get(0)?;
-        let path = Path::new(OsStr::from_bytes(row.get_raw(1).as_blob()?));
+        let path = path_from_blob(row.get_raw(1))?;
 
         consumer(new_file_id, path)?;
     }
@@ -610,6 +741,24 @@ AND NOT EXISTS (
 pub fn delete_unvisited_files(conn: &Connection) -> Fallible<usize> {
     let rows = conn.execute(
         "DELETE FROM files WHERE id NOT IN (SELECT file_id FROM visited_files)",
+        NO_PARAMS,
+    )?;
+
+    Ok(rows)
+}
+
+pub fn delete_unvisited_directories(conn: &Connection) -> Fallible<usize> {
+    let rows = conn.execute(
+        "DELETE FROM directories WHERE id NOT IN (SELECT directory_id FROM visited_directories)",
+        NO_PARAMS,
+    )?;
+
+    Ok(rows)
+}
+
+pub fn delete_unvisited_symbolic_links(conn: &Connection) -> Fallible<usize> {
+    let rows = conn.execute(
+        "DELETE FROM symbolic_links WHERE id NOT IN (SELECT symbolic_link_id FROM visited_symbolic_links)",
         NO_PARAMS,
     )?;
 
@@ -629,4 +778,14 @@ pub fn select_storage_used(conn: &Connection) -> Fallible<i64> {
     let storage_used = conn.query_row("SELECT SUM(b2_length) FROM (SELECT b2_length FROM patchsets UNION ALL SELECT b2_length FROM archives)", NO_PARAMS, |row| row.get(0))?;
 
     Ok(storage_used)
+}
+
+fn path_from_blob(value: ValueRef) -> Result<&Path, FromSqlError> {
+    value
+        .as_blob()
+        .map(|blob| Path::new(OsStr::from_bytes(blob)))
+}
+
+fn path_as_bytes(path: &Path) -> &[u8] {
+    path.as_os_str().as_bytes()
 }
