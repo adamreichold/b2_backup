@@ -26,7 +26,7 @@ use std::os::unix::fs::{symlink as create_symlink, FileExt, PermissionsExt};
 use std::path::Path;
 use std::sync::Mutex;
 
-use blake2::{Blake2s, Digest};
+use blake3::hash;
 use rusqlite::{
     session::{Changegroup, ConflictAction, ConflictType, Session},
     Connection, TransactionBehavior,
@@ -444,7 +444,7 @@ pub fn store_block(
     offset: u64,
     block: &[u8],
 ) -> Fallible {
-    let digest = Blake2s::digest(block);
+    let digest = hash(block);
 
     let archive_id;
     let archive_len;
@@ -453,7 +453,7 @@ pub fn store_block(
     {
         let mut update = update.lock().unwrap();
 
-        let block_id = select_block(update.conn, &digest)?;
+        let block_id = select_block(update.conn, digest.as_bytes())?;
 
         if let Some(block_id) = block_id {
             return insert_new_mapping(update.conn, new_file_id, offset, block_id);
@@ -462,7 +462,7 @@ pub fn store_block(
         let length = block.len().try_into().unwrap();
         let block_id = insert_block(
             update.conn,
-            &digest,
+            digest.as_bytes(),
             length,
             update.archive_id,
             update.archive_len,
