@@ -21,7 +21,7 @@ use std::io::{Cursor, Read};
 use chacha20poly1305::{
     aead::{
         generic_array::{typenum::Unsigned, GenericArray},
-        Aead, NewAead,
+        Aead, AeadInPlace, NewAead,
     },
     XChaCha20Poly1305,
 };
@@ -38,7 +38,7 @@ type Tag = GenericArray<u8, <XChaCha20Poly1305 as Aead>::TagSize>;
 const NONCE_LEN: usize = <XChaCha20Poly1305 as Aead>::NonceSize::USIZE;
 const TAG_LEN: usize = <XChaCha20Poly1305 as Aead>::TagSize::USIZE;
 
-pub fn pack(key: Key, compression_level: i32, name: &str, reader: impl Read) -> Fallible<Vec<u8>> {
+pub fn pack(key: &Key, compression_level: i32, name: &str, reader: impl Read) -> Fallible<Vec<u8>> {
     let mut buf = encode_all(reader, compression_level)?;
 
     let mut nonce = Nonce::default();
@@ -57,7 +57,7 @@ pub fn pack(key: Key, compression_level: i32, name: &str, reader: impl Read) -> 
     Ok(buf)
 }
 
-pub fn unpack(key: Key, name: &str, mut buf: Vec<u8>) -> Fallible<impl Read> {
+pub fn unpack(key: &Key, name: &str, mut buf: Vec<u8>) -> Fallible<impl Read> {
     if buf.len() < TAG_LEN + NONCE_LEN {
         return Err("Buffer too short".into());
     }
