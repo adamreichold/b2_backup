@@ -41,12 +41,7 @@ macro_rules! try_not_found {
     };
 }
 
-pub fn backup(
-    config: &Config,
-    client: &Client,
-    update: &Mutex<Update<'_>>,
-    path: &Path,
-) -> Fallible {
+pub fn backup(config: &Config, client: &Client, update: &Mutex<Update>, path: &Path) -> Fallible {
     if was_interrupted() {
         return Ok(());
     }
@@ -86,7 +81,7 @@ pub fn backup(
 fn backup_dir(
     config: &Config,
     client: &Client,
-    update: &Mutex<Update<'_>>,
+    update: &Mutex<Update>,
     path: &Path,
     metadata: &Metadata,
 ) -> Fallible {
@@ -106,7 +101,7 @@ fn backup_dir(
 fn backup_file(
     config: &Config,
     client: &Client,
-    update: &Mutex<Update<'_>>,
+    update: &Mutex<Update>,
     path: &Path,
     metadata: &Metadata,
 ) -> Fallible {
