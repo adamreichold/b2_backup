@@ -7,12 +7,12 @@ repository = "https://github.com/adamreichold/b2_backup"
 edition = "2018"
 
 [dependencies]
-base64 = "0.12"
+base64 = "0.13"
 blake3 = "0.3"
-chacha20poly1305 = "0.5"
+chacha20poly1305 = "0.6"
 clap = "2.33"
 hex = "0.4"
-nix = "0.18"
+nix = "0.19"
 rayon = "1.2"
 ring = "0.16"
 rusqlite = { version = "0.24", features = ["bundled", "session"] }
