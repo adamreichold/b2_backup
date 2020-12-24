@@ -16,11 +16,13 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with b2_backup.  If not, see <https://www.gnu.org/licenses/>.
 */
+use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::fs::Metadata;
 use std::os::unix::{ffi::OsStrExt, fs::MetadataExt};
 use std::path::Path;
 
+use blake3::OUT_LEN as DIGEST_LEN;
 use rusqlite::{
     params,
     types::{FromSqlError, ValueRef},
@@ -487,20 +489,22 @@ pub fn update_block(
     Ok(())
 }
 
+#[allow(clippy::type_complexity)]
 pub fn select_blocks_by_archive(
     conn: &Connection,
     archive_id: i64,
-) -> Fallible<Vec<(i64, u64, u64)>> {
+) -> Fallible<Vec<(i64, [u8; DIGEST_LEN], u64, u64)>> {
     let mut stmt = conn.prepare(
-        "SELECT id, length, archive_off FROM blocks WHERE archive_id = ? ORDER BY archive_off ASC",
+        "SELECT id, digest, length, archive_off FROM blocks WHERE archive_id = ? ORDER BY archive_off ASC",
     )?;
 
     let blocks = stmt
         .query_map(params![archive_id], |row| {
             Ok((
                 row.get_raw(0).as_i64()?,
-                row.get_raw(1).as_i64()? as u64,
+                <[u8; DIGEST_LEN]>::try_from(row.get_raw(1).as_blob()?).unwrap(),
                 row.get_raw(2).as_i64()? as u64,
+                row.get_raw(3).as_i64()? as u64,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;

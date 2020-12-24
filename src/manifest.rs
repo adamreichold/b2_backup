@@ -162,17 +162,23 @@ impl Manifest {
 
                 let blocks = select_blocks_by_archive(update.conn, *archive_id)?;
 
-                for (block_id, length, archive_off) in &blocks {
-                    buffer.resize((*length).try_into().unwrap(), 0);
-                    archive.read_exact_at(&mut buffer, *archive_off)?;
+                for (block_id, stored_digest, length, archive_off) in blocks {
+                    buffer.resize(length as _, 0);
+                    archive.read_exact_at(&mut buffer, archive_off)?;
                     update.blocks.write_all(&buffer)?;
 
-                    update_block(
-                        update.conn,
-                        *block_id,
-                        update.archive_id,
-                        update.archive_len,
-                    )?;
+                    let digest = hash(&buffer);
+                    if digest != stored_digest {
+                        return Err(format!(
+                            "Block {} has digest {}, but should have {}.",
+                            block_id,
+                            digest.to_hex(),
+                            hex::encode(stored_digest),
+                        )
+                        .into());
+                    }
+
+                    update_block(update.conn, block_id, update.archive_id, update.archive_len)?;
                     update.archive_len += length;
                 }
 
