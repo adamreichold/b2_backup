@@ -12,14 +12,14 @@ blake3 = "0.3"
 chacha20poly1305 = "0.7"
 clap = "2.33"
 hex = "0.4"
-nix = "0.19"
+nix = "0.20"
 rayon = "1.2"
 ring = "0.16"
 rusqlite = { version = "0.24", features = ["bundled", "session"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
 tempfile = "3.1"
-zeptohttpc = { version = "0.2", features = ["tls", "json"] }
+zeptohttpc = { version = "0.4", features = ["tls", "json"] }
 zstd = { version = "0.6", default-features = false }
 
 [profile.release]

@@ -111,7 +111,7 @@ impl<'a> Client<'a> {
             .into());
         }
 
-        Ok(unpack(&self.key, name, resp.into_vec()?)?)
+        unpack(&self.key, name, resp.into_vec()?)
     }
 
     pub fn remove(&self, name: &str, id: &str) -> Fallible {
