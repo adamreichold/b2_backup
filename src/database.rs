@@ -26,7 +26,7 @@ use blake3::OUT_LEN as DIGEST_LEN;
 use rusqlite::{
     params,
     types::{FromSqlError, ValueRef},
-    Connection, OptionalExtension, NO_PARAMS,
+    Connection, OptionalExtension,
 };
 
 use super::Fallible;
@@ -154,7 +154,7 @@ pub fn select_patchset(conn: &Connection, patchset_id: i64) -> Fallible<bool> {
 }
 
 pub fn insert_def_patchset(conn: &Connection) -> Fallible<i64> {
-    conn.execute("INSERT INTO patchsets DEFAULT VALUES", NO_PARAMS)?;
+    conn.execute("INSERT INTO patchsets DEFAULT VALUES", [])?;
     let patchset_id = conn.last_insert_rowid();
 
     Ok(patchset_id)
@@ -205,7 +205,7 @@ pub fn select_archive(conn: &Connection, archive_id: i64) -> Fallible<bool> {
 }
 
 pub fn insert_def_archive(conn: &Connection) -> Fallible<i64> {
-    conn.execute("INSERT INTO archives DEFAULT VALUES", NO_PARAMS)?;
+    conn.execute("INSERT INTO archives DEFAULT VALUES", [])?;
     let archive_id = conn.last_insert_rowid();
 
     Ok(archive_id)
@@ -286,8 +286,8 @@ pub fn update_file(conn: &Connection, file_id: i64, new_file_id: i64) -> Fallibl
         .next()?
         .ok_or_else(|| format!("Invalid new file ID {}", new_file_id))?;
 
-    let size = row.get_raw(0).as_i64()?;
-    let mode = row.get_raw(1).as_i64()?;
+    let size = row.get_ref_unwrap(0).as_i64()?;
+    let mode = row.get_ref_unwrap(1).as_i64()?;
 
     let mut stmt = conn.prepare_cached("UPDATE files SET size = ?, mode = ? WHERE id = ?")?;
 
@@ -307,8 +307,8 @@ pub fn select_files_by_path(
     let mut rows = stmt.query(params![path_filter.map(path_as_bytes)])?;
     while let Some(row) = rows.next()? {
         let file_id = row.get(0)?;
-        let path = path_from_blob(row.get_raw(1))?;
-        let size = row.get_raw(2).as_i64()? as u64;
+        let path = path_from_blob(row.get_ref_unwrap(1))?;
+        let size = row.get_ref_unwrap(2).as_i64()? as u64;
         let mode = row.get(3)?;
 
         consumer(file_id, path, size, mode)?;
@@ -342,7 +342,7 @@ AND id IN (
     let mut rows = stmt.query(params![path_filter.map(path_as_bytes), archive_id])?;
     while let Some(row) = rows.next()? {
         let file_id = row.get(0)?;
-        let path = path_from_blob(row.get_raw(1))?;
+        let path = path_from_blob(row.get_ref_unwrap(1))?;
 
         consumer(file_id, path)?;
     }
@@ -387,7 +387,7 @@ pub fn select_directories_by_path(
 
     let mut rows = stmt.query(params![path_filter.map(path_as_bytes)])?;
     while let Some(row) = rows.next()? {
-        let path = path_from_blob(row.get_raw(0))?;
+        let path = path_from_blob(row.get_ref_unwrap(0))?;
         let mode = row.get(1)?;
 
         consumer(path, mode)?;
@@ -434,8 +434,8 @@ pub fn select_symbolic_links_by_path(
 
     let mut rows = stmt.query(params![path_filter.map(path_as_bytes)])?;
     while let Some(row) = rows.next()? {
-        let path = path_from_blob(row.get_raw(0))?;
-        let target = path_from_blob(row.get_raw(1))?;
+        let path = path_from_blob(row.get_ref_unwrap(0))?;
+        let target = path_from_blob(row.get_ref_unwrap(1))?;
 
         consumer(path, target)?;
     }
@@ -501,10 +501,10 @@ pub fn select_blocks_by_archive(
     let blocks = stmt
         .query_map(params![archive_id], |row| {
             Ok((
-                row.get_raw(0).as_i64()?,
-                <[u8; DIGEST_LEN]>::try_from(row.get_raw(1).as_blob()?).unwrap(),
-                row.get_raw(2).as_i64()? as u64,
-                row.get_raw(3).as_i64()? as u64,
+                row.get_ref_unwrap(0).as_i64()?,
+                <[u8; DIGEST_LEN]>::try_from(row.get_ref_unwrap(1).as_blob()?).unwrap(),
+                row.get_ref_unwrap(2).as_i64()? as u64,
+                row.get_ref_unwrap(3).as_i64()? as u64,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -535,10 +535,10 @@ ORDER BY blocks.archive_id ASC, blocks.archive_off ASC, mappings.offset ASC
 
     let mut rows = stmt.query(params![file_id, archive_id])?;
     while let Some(row) = rows.next()? {
-        let length = row.get_raw(0).as_i64()? as u64;
+        let length = row.get_ref_unwrap(0).as_i64()? as u64;
         let archive_id = row.get(1)?;
-        let archive_off = row.get_raw(2).as_i64()? as u64;
-        let offset = row.get_raw(3).as_i64()? as u64;
+        let archive_off = row.get_ref_unwrap(2).as_i64()? as u64;
+        let offset = row.get_ref_unwrap(3).as_i64()? as u64;
 
         consumer(length, archive_id, archive_off, offset)?;
     }
@@ -677,7 +677,7 @@ pub fn select_unused_archives(conn: &Connection) -> Fallible<Vec<(i64, String)>>
     )?;
 
     let rows = stmt
-        .query_map(NO_PARAMS, |row| Ok((row.get(0)?, row.get(1)?)))?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(rows)
@@ -731,10 +731,10 @@ AND NOT EXISTS (
 "#,
     )?;
 
-    let mut rows = stmt.query(NO_PARAMS)?;
+    let mut rows = stmt.query([])?;
     while let Some(row) = rows.next()? {
         let new_file_id = row.get(0)?;
-        let path = path_from_blob(row.get_raw(1))?;
+        let path = path_from_blob(row.get_ref_unwrap(1))?;
 
         consumer(new_file_id, path)?;
     }
@@ -745,7 +745,7 @@ AND NOT EXISTS (
 pub fn delete_unvisited_files(conn: &Connection) -> Fallible<usize> {
     let rows = conn.execute(
         "DELETE FROM files WHERE id NOT IN (SELECT file_id FROM visited_files)",
-        NO_PARAMS,
+        [],
     )?;
 
     Ok(rows)
@@ -754,7 +754,7 @@ pub fn delete_unvisited_files(conn: &Connection) -> Fallible<usize> {
 pub fn delete_unvisited_directories(conn: &Connection) -> Fallible<usize> {
     let rows = conn.execute(
         "DELETE FROM directories WHERE id NOT IN (SELECT directory_id FROM visited_directories)",
-        NO_PARAMS,
+        [],
     )?;
 
     Ok(rows)
@@ -763,7 +763,7 @@ pub fn delete_unvisited_directories(conn: &Connection) -> Fallible<usize> {
 pub fn delete_unvisited_symbolic_links(conn: &Connection) -> Fallible<usize> {
     let rows = conn.execute(
         "DELETE FROM symbolic_links WHERE id NOT IN (SELECT symbolic_link_id FROM visited_symbolic_links)",
-        NO_PARAMS,
+        [],
     )?;
 
     Ok(rows)
@@ -772,14 +772,14 @@ pub fn delete_unvisited_symbolic_links(conn: &Connection) -> Fallible<usize> {
 pub fn delete_unused_blocks(conn: &Connection) -> Fallible<usize> {
     let rows = conn.execute(
         "DELETE FROM blocks WHERE id NOT IN (SELECT block_id FROM mappings)",
-        NO_PARAMS,
+        [],
     )?;
 
     Ok(rows)
 }
 
 pub fn select_storage_used(conn: &Connection) -> Fallible<i64> {
-    let storage_used = conn.query_row("SELECT SUM(b2_length) FROM (SELECT b2_length FROM patchsets UNION ALL SELECT b2_length FROM archives)", NO_PARAMS, |row| row.get(0))?;
+    let storage_used = conn.query_row("SELECT SUM(b2_length) FROM (SELECT b2_length FROM patchsets UNION ALL SELECT b2_length FROM archives)", [], |row| row.get(0))?;
 
     Ok(storage_used)
 }

@@ -15,12 +15,12 @@ hex = "0.4"
 nix = "0.20"
 rayon = "1.2"
 ring = "0.16"
-rusqlite = { version = "0.24", features = ["bundled", "session"] }
+rusqlite = { version = "0.25", features = ["bundled", "session"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
 tempfile = "3.1"
 zeptohttpc = { version = "0.4", features = ["tls", "json"] }
-zstd = { version = "0.6", default-features = false }
+zstd = { version = "0.7", default-features = false }
 
 [profile.release]
 opt-level = "s"
