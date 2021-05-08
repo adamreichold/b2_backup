@@ -21,7 +21,7 @@ use std::io::{Cursor, Read};
 use chacha20poly1305::{
     aead::{
         generic_array::{typenum::Unsigned, GenericArray},
-        Aead, AeadInPlace, NewAead,
+        AeadCore, AeadInPlace, NewAead,
     },
     XChaCha20Poly1305,
 };
@@ -32,11 +32,11 @@ use super::Fallible;
 
 pub type Key = GenericArray<u8, <XChaCha20Poly1305 as NewAead>::KeySize>;
 
-type Nonce = GenericArray<u8, <XChaCha20Poly1305 as Aead>::NonceSize>;
-type Tag = GenericArray<u8, <XChaCha20Poly1305 as Aead>::TagSize>;
+type Nonce = GenericArray<u8, <XChaCha20Poly1305 as AeadCore>::NonceSize>;
+type Tag = GenericArray<u8, <XChaCha20Poly1305 as AeadCore>::TagSize>;
 
-const NONCE_LEN: usize = <XChaCha20Poly1305 as Aead>::NonceSize::USIZE;
-const TAG_LEN: usize = <XChaCha20Poly1305 as Aead>::TagSize::USIZE;
+const NONCE_LEN: usize = <XChaCha20Poly1305 as AeadCore>::NonceSize::USIZE;
+const TAG_LEN: usize = <XChaCha20Poly1305 as AeadCore>::TagSize::USIZE;
 
 pub fn pack(key: &Key, compression_level: i32, name: &str, reader: impl Read) -> Fallible<Vec<u8>> {
     let mut buf = encode_all(reader, compression_level)?;
