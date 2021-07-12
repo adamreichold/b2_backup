@@ -63,11 +63,11 @@ pub fn backup(config: &Config, client: &Client, update: &Mutex<Update>, path: &P
     let file_type = metadata.file_type();
 
     if file_type.is_dir() {
-        backup_dir(config, client, update, &path, &metadata)?;
+        backup_dir(config, client, update, path, &metadata)?;
     } else if file_type.is_file() {
-        backup_file(config, client, update, &path, &metadata)?;
+        backup_file(config, client, update, path, &metadata)?;
     } else if file_type.is_symlink() {
-        backup_symlink(update, &path)?;
+        backup_symlink(update, path)?;
     } else {
         eprintln!(
             "Skipping {} as it does not appear to be a regular file",
@@ -95,7 +95,7 @@ fn backup_dir(
 
     paths
         .par_iter()
-        .try_for_each(|path| backup(config, client, update, &path))
+        .try_for_each(|path| backup(config, client, update, path))
 }
 
 fn backup_file(

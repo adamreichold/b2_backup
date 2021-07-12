@@ -38,7 +38,6 @@ use nix::{
     fcntl::copy_file_range,
     libc::c_int,
     sys::signal::{signal, SigHandler, Signal},
-    Error as NixError,
 };
 use rayon::{
     iter::{IntoParallelRefIterator, ParallelIterator},
@@ -121,7 +120,7 @@ fn copy_file_range_full(from: &File, from_off: u64, to: &File, to_off: u64, len:
         match copy_file_range(from, Some(&mut from_off), to, Some(&mut to_off), len) {
             Ok(0) => return Err(IoError::from(IoErrorKind::WriteZero).into()),
             Ok(written) => len -= written,
-            Err(NixError::Sys(Errno::EINTR)) => (),
+            Err(Errno::EINTR) => (),
             Err(err) => return Err(err.into()),
         }
     }

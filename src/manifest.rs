@@ -224,7 +224,7 @@ impl Manifest {
 
         for (patchset_id, b2_file_id) in &small_patchsets {
             let name = format!("manifest_{}", patchset_id);
-            client.remove(&name, &b2_file_id)?;
+            client.remove(&name, b2_file_id)?;
         }
 
         Ok(())
