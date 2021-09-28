@@ -5,11 +5,12 @@ authors = ["Adam Reichold <adam.reichold@t-online.de>"]
 license = "GPL-3.0"
 repository = "https://github.com/adamreichold/b2_backup"
 edition = "2018"
+resolver = "2"
 
 [dependencies]
 base64 = "0.13"
-blake3 = "0.3"
-chacha20poly1305 = "0.8"
+blake3 = "1.0"
+chacha20poly1305 = "0.9"
 clap = "2.33"
 hex = "0.4"
 nix = "0.22"
@@ -19,7 +20,7 @@ rusqlite = { version = "0.25", features = ["bundled", "session"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
 tempfile = "3.1"
-zeptohttpc = { version = "0.4", features = ["tls", "json"] }
+zeptohttpc = { version = "0.5", features = ["tls", "json"] }
 zstd = { version = "0.9", default-features = false }
 
 [profile.release]

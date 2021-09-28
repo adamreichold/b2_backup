@@ -77,12 +77,12 @@ fn main() -> Fallible {
         ("collect-small-archives", _) => manifest.collect_small_archives(&config, &client),
         ("collect-small-patchsets", _) => manifest.collect_small_patchsets(&config, &client),
         ("list-files", Some(args)) => {
-            manifest.list_files(args.value_of_os("filter").as_deref().map(Path::new))
+            manifest.list_files(args.value_of_os("filter").map(Path::new))
         }
         ("restore-files", Some(args)) => manifest.restore_files(
             &client,
-            args.value_of_os("filter").as_deref().map(Path::new),
-            args.value_of_os("target_dir").as_deref().map(Path::new),
+            args.value_of_os("filter").map(Path::new),
+            args.value_of_os("target_dir").map(Path::new),
         ),
         ("restore-manifest", _) => manifest.restore_manifest(&client),
         ("purge-storage", _) => manifest.purge_storage(&client),

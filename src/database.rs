@@ -784,6 +784,16 @@ pub fn select_storage_used(conn: &Connection) -> Fallible<i64> {
     Ok(storage_used)
 }
 
+pub fn select_unused_blocks(conn: &Connection) -> Fallible<i64> {
+    let unused_blocks = conn.query_row(
+        "SELECT SUM(length) FROM blocks WHERE id NOT IN (SELECT block_id FROM mappings)",
+        [],
+        |row| row.get::<_, Option<i64>>(0),
+    )?;
+
+    Ok(unused_blocks.unwrap_or(0))
+}
+
 fn path_from_blob(value: ValueRef) -> Result<&Path, FromSqlError> {
     value
         .as_blob()
