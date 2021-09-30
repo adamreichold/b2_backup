@@ -784,14 +784,14 @@ pub fn select_storage_used(conn: &Connection) -> Fallible<i64> {
     Ok(storage_used)
 }
 
-pub fn select_unused_blocks(conn: &Connection) -> Fallible<i64> {
-    let unused_blocks = conn.query_row(
-        "SELECT SUM(length) FROM blocks WHERE id NOT IN (SELECT block_id FROM mappings)",
-        [],
-        |row| row.get::<_, Option<i64>>(0),
-    )?;
+pub fn select_uncompressed_size(conn: &Connection) -> Fallible<(i64, i64)> {
+    let uncompressed_size_of_archives =
+        conn.query_row("SELECT SUM(length) FROM archives", [], |row| row.get(0))?;
 
-    Ok(unused_blocks.unwrap_or(0))
+    let uncompressed_size_of_blocks =
+        conn.query_row("SELECT SUM(length) FROM blocks", [], |row| row.get(0))?;
+
+    Ok((uncompressed_size_of_archives, uncompressed_size_of_blocks))
 }
 
 fn path_from_blob(value: ValueRef) -> Result<&Path, FromSqlError> {

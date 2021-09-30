@@ -47,7 +47,7 @@ use super::{
         select_closed_new_files, select_directories_by_path, select_directory, select_file,
         select_files_by_path, select_files_by_path_and_archive, select_patchset,
         select_small_archives, select_small_patchsets, select_storage_used, select_symbolic_link,
-        select_symbolic_links_by_path, select_unused_archives, select_unused_blocks,
+        select_symbolic_links_by_path, select_uncompressed_size, select_unused_archives,
         update_archive, update_block, update_directory, update_file, update_new_file,
         update_patchset, update_symbolic_link,
     },
@@ -131,7 +131,9 @@ impl Manifest {
         upload_patchset(&trans, client, patchset.as_slice())?;
 
         let storage_used = select_storage_used(&trans)?;
-        let unused_blocks = select_unused_blocks(&trans)?;
+
+        let (uncompressed_size_of_archives, uncompressed_size_of_blocks) =
+            select_uncompressed_size(&trans)?;
 
         trans.commit()?;
 
@@ -141,9 +143,10 @@ impl Manifest {
         }
 
         println!(
-            "{} of storage used ({} of unused blocks)",
+            "{} of storage used ({} uncompressed, {} mapped)",
             Bytes(storage_used as _),
-            Bytes(unused_blocks as _)
+            Bytes(uncompressed_size_of_archives as _),
+            Bytes(uncompressed_size_of_blocks as _)
         );
 
         Ok(())
