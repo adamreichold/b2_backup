@@ -4,8 +4,7 @@ version = "0.1.0"
 authors = ["Adam Reichold <adam.reichold@t-online.de>"]
 license = "GPL-3.0"
 repository = "https://github.com/adamreichold/b2_backup"
-edition = "2018"
-resolver = "2"
+edition = "2021"
 
 [dependencies]
 base64 = "0.13"
