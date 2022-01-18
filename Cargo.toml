@@ -10,17 +10,17 @@ edition = "2021"
 base64 = "0.13"
 blake3 = "1.0"
 chacha20poly1305 = "0.9"
-clap = "2.33"
+clap = { version = "3.0", default-features = false, features = ["std"] }
 hex = "0.4"
 nix = "0.23"
 rayon = "1.2"
 ring = "0.16"
-rusqlite = { version = "0.26", features = ["bundled", "session"] }
+rusqlite = { version = "0.27", features = ["bundled", "session"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
 tempfile = "3.1"
 zeptohttpc = { version = "0.5", features = ["tls", "json"] }
-zstd = { version = "0.9", default-features = false }
+zstd = { version = "0.10", default-features = false }
 
 [profile.release]
 opt-level = "s"

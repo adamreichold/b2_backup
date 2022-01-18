@@ -32,7 +32,7 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use clap::{App, Arg, ArgMatches, SubCommand};
+use clap::{Arg, ArgMatches, Command};
 use nix::{
     errno::Errno,
     fcntl::copy_file_range,
@@ -60,33 +60,35 @@ fn main() -> Fallible {
     let mut manifest = Manifest::open("manifest.db")?;
 
     match opts.subcommand() {
-        ("", _) | ("backup", _) => manifest.update(config.keep_deleted_files, &client, |update| {
-            install_interrupt_handler()?;
+        None | Some(("backup", _)) => {
+            manifest.update(config.keep_deleted_files, &client, |update| {
+                install_interrupt_handler()?;
 
-            if let Some(num_threads) = config.num_threads {
-                ThreadPoolBuilder::new()
-                    .num_threads(num_threads)
-                    .build_global()?;
-            }
+                if let Some(num_threads) = config.num_threads {
+                    ThreadPoolBuilder::new()
+                        .num_threads(num_threads)
+                        .build_global()?;
+                }
 
-            config
-                .includes
-                .par_iter()
-                .try_for_each(|path| backup(&config, &client, update, path))
-        }),
-        ("collect-small-archives", _) => manifest.collect_small_archives(&config, &client),
-        ("collect-small-patchsets", _) => manifest.collect_small_patchsets(&config, &client),
-        ("list-files", Some(args)) => {
+                config
+                    .includes
+                    .par_iter()
+                    .try_for_each(|path| backup(&config, &client, update, path))
+            })
+        }
+        Some(("collect-small-archives", _)) => manifest.collect_small_archives(&config, &client),
+        Some(("collect-small-patchsets", _)) => manifest.collect_small_patchsets(&config, &client),
+        Some(("list-files", args)) => {
             manifest.list_files(args.value_of_os("filter").map(Path::new))
         }
-        ("restore-files", Some(args)) => manifest.restore_files(
+        Some(("restore-files", args)) => manifest.restore_files(
             &client,
             args.value_of_os("filter").map(Path::new),
             args.value_of_os("target_dir").map(Path::new),
         ),
-        ("restore-manifest", _) => manifest.restore_manifest(&client),
-        ("purge-storage", _) => manifest.purge_storage(&client),
-        (cmd, _) => Err(format!("Unexpected subcommand {}", cmd).into()),
+        Some(("restore-manifest", _)) => manifest.restore_manifest(&client),
+        Some(("purge-storage", _)) => manifest.purge_storage(&client),
+        Some(_) => unreachable!(),
     }
 }
 
@@ -128,28 +130,24 @@ fn copy_file_range_full(from: &File, from_off: u64, to: &File, to_off: u64, len:
     Ok(())
 }
 
-fn parse_opts() -> ArgMatches<'static> {
-    App::new(env!("CARGO_PKG_NAME"))
+fn parse_opts() -> ArgMatches {
+    Command::new(env!("CARGO_PKG_NAME"))
         .arg(
-            Arg::with_name("config")
+            Arg::new("config")
                 .long("config")
                 .default_value("config.yaml"),
         )
-        .subcommand(SubCommand::with_name("backup"))
-        .subcommand(SubCommand::with_name("collect-small-archives"))
-        .subcommand(SubCommand::with_name("collect-small-patchsets"))
-        .subcommand(SubCommand::with_name("list-files").arg(Arg::with_name("filter")))
+        .subcommand(Command::new("backup"))
+        .subcommand(Command::new("collect-small-archives"))
+        .subcommand(Command::new("collect-small-patchsets"))
+        .subcommand(Command::new("list-files").arg(Arg::new("filter")))
         .subcommand(
-            SubCommand::with_name("restore-files")
-                .arg(Arg::with_name("filter"))
-                .arg(
-                    Arg::with_name("target-dir")
-                        .long("target-dir")
-                        .takes_value(true),
-                ),
+            Command::new("restore-files")
+                .arg(Arg::new("filter"))
+                .arg(Arg::new("target-dir").long("target-dir").takes_value(true)),
         )
-        .subcommand(SubCommand::with_name("restore-manifest"))
-        .subcommand(SubCommand::with_name("purge-storage"))
+        .subcommand(Command::new("restore-manifest"))
+        .subcommand(Command::new("purge-storage"))
         .get_matches()
 }
 
