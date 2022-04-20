@@ -32,7 +32,7 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use clap::{Arg, ArgMatches, Command};
+use clap::{command, Arg, ArgMatches, Command};
 use nix::{
     errno::Errno,
     fcntl::copy_file_range,
@@ -131,7 +131,7 @@ fn copy_file_range_full(from: &File, from_off: u64, to: &File, to_off: u64, len:
 }
 
 fn parse_opts() -> ArgMatches {
-    Command::new(env!("CARGO_PKG_NAME"))
+    command!()
         .arg(
             Arg::new("config")
                 .long("config")
@@ -144,7 +144,7 @@ fn parse_opts() -> ArgMatches {
         .subcommand(
             Command::new("restore-files")
                 .arg(Arg::new("filter"))
-                .arg(Arg::new("target-dir").long("target-dir").takes_value(true)),
+                .arg(Arg::new("target_dir").long("target-dir").takes_value(true)),
         )
         .subcommand(Command::new("restore-manifest"))
         .subcommand(Command::new("purge-storage"))
