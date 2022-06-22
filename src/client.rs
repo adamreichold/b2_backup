@@ -218,7 +218,9 @@ impl<'a> Client<'a> {
         let mut dur = Duration::from_secs(1);
 
         loop {
-            let uploader = match self.uploader.lock().unwrap().remove(&thread_id) {
+            let uploader = self.uploader.lock().unwrap().remove(&thread_id);
+
+            let uploader = match uploader {
                 Some(uploader) => uploader,
                 None => self.uploader()?,
             };
