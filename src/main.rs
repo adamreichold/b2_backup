@@ -32,7 +32,7 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use clap::{command, Arg, ArgMatches, Command};
+use clap::{command, value_parser, Arg, ArgMatches, Command};
 use nix::{
     errno::Errno,
     fcntl::copy_file_range,
@@ -53,7 +53,7 @@ type Fallible<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 fn main() -> Fallible {
     let opts = parse_opts();
 
-    let config = Config::parse(opts.value_of_os("config").unwrap())?;
+    let config = Config::parse(get_path(&opts, "config").unwrap())?;
 
     let client = Client::new(&config)?;
 
@@ -78,13 +78,11 @@ fn main() -> Fallible {
         }
         Some(("collect-small-archives", _)) => manifest.collect_small_archives(&config, &client),
         Some(("collect-small-patchsets", _)) => manifest.collect_small_patchsets(&config, &client),
-        Some(("list-files", args)) => {
-            manifest.list_files(args.value_of_os("filter").map(Path::new))
-        }
+        Some(("list-files", args)) => manifest.list_files(get_path(args, "filter")),
         Some(("restore-files", args)) => manifest.restore_files(
             &client,
-            args.value_of_os("filter").map(Path::new),
-            args.value_of_os("target_dir").map(Path::new),
+            get_path(args, "filter"),
+            get_path(args, "target_dir"),
         ),
         Some(("restore-manifest", _)) => manifest.restore_manifest(&client),
         Some(("purge-storage", _)) => manifest.purge_storage(&client),
@@ -135,20 +133,32 @@ fn parse_opts() -> ArgMatches {
         .arg(
             Arg::new("config")
                 .long("config")
-                .default_value("config.yaml"),
+                .default_value("config.yaml")
+                .value_parser(value_parser!(PathBuf)),
         )
         .subcommand(Command::new("backup"))
         .subcommand(Command::new("collect-small-archives"))
         .subcommand(Command::new("collect-small-patchsets"))
-        .subcommand(Command::new("list-files").arg(Arg::new("filter")))
+        .subcommand(
+            Command::new("list-files").arg(Arg::new("filter").value_parser(value_parser!(PathBuf))),
+        )
         .subcommand(
             Command::new("restore-files")
-                .arg(Arg::new("filter"))
-                .arg(Arg::new("target_dir").long("target-dir").takes_value(true)),
+                .arg(Arg::new("filter").value_parser(value_parser!(PathBuf)))
+                .arg(
+                    Arg::new("target_dir")
+                        .long("target-dir")
+                        .takes_value(true)
+                        .value_parser(value_parser!(PathBuf)),
+                ),
         )
         .subcommand(Command::new("restore-manifest"))
         .subcommand(Command::new("purge-storage"))
         .get_matches()
+}
+
+fn get_path<'a>(opts: &'a ArgMatches, arg: &str) -> Option<&'a Path> {
+    opts.get_one::<PathBuf>(arg).map(PathBuf::as_path)
 }
 
 #[derive(Debug, Deserialize)]

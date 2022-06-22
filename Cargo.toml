@@ -10,7 +10,7 @@ edition = "2021"
 base64 = "0.13"
 blake3 = "1.0"
 chacha20poly1305 = "0.9"
-clap = { version = "3.0", default-features = false, features = ["std", "cargo"] }
+clap = { version = "3.2", default-features = false, features = ["std", "cargo"] }
 hex = "0.4"
 nix = "0.24"
 rayon = "1.2"
