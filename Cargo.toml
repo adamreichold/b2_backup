@@ -9,10 +9,10 @@ edition = "2021"
 [dependencies]
 base64 = "0.13"
 blake3 = "1.0"
-chacha20poly1305 = "0.9"
+chacha20poly1305 = "0.10"
 clap = { version = "3.2", default-features = false, features = ["std", "cargo"] }
 hex = "0.4"
-nix = "0.24"
+nix = "0.25"
 rayon = "1.2"
 ring = "0.16"
 rusqlite = { version = "0.28", features = ["bundled", "session"] }

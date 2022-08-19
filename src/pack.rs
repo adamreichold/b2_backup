@@ -21,7 +21,7 @@ use std::io::{Cursor, Read};
 use chacha20poly1305::{
     aead::{
         generic_array::{typenum::Unsigned, GenericArray},
-        AeadCore, AeadInPlace, NewAead,
+        AeadCore, AeadInPlace, KeyInit, KeySizeUser,
     },
     XChaCha20Poly1305,
 };
@@ -30,7 +30,7 @@ use zstd::{encode_all, Decoder};
 
 use super::Fallible;
 
-pub type Key = GenericArray<u8, <XChaCha20Poly1305 as NewAead>::KeySize>;
+pub type Key = GenericArray<u8, <XChaCha20Poly1305 as KeySizeUser>::KeySize>;
 
 type Nonce = GenericArray<u8, <XChaCha20Poly1305 as AeadCore>::NonceSize>;
 type Tag = GenericArray<u8, <XChaCha20Poly1305 as AeadCore>::TagSize>;
