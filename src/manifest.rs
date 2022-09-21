@@ -111,10 +111,11 @@ impl Manifest {
                     &b2_file_id,
                     b2_length,
                 )?;
-                collect_closed_new_files(&trans)?;
             } else if was_interrupted || update.archive_id == archive_id {
                 delete_archive(&trans, update.archive_id)?;
             }
+
+            collect_closed_new_files(&trans)?;
 
             unused_archives =
                 delete_unused_archives(&trans, was_interrupted || keep_unvisited_files)?;
