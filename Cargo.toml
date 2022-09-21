@@ -26,3 +26,4 @@ zstd = { version = "0.11", default-features = false }
 opt-level = "s"
 lto = true
 codegen-units = 1
+strip = "debuginfo"
