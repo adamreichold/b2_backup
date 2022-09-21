@@ -786,10 +786,14 @@ pub fn select_storage_used(conn: &Connection) -> Fallible<i64> {
 
 pub fn select_uncompressed_size(conn: &Connection) -> Fallible<(i64, i64)> {
     let uncompressed_size_of_archives =
-        conn.query_row("SELECT SUM(length) FROM archives", [], |row| row.get(0))?;
+        conn.query_row("SELECT IFNULL(SUM(length), 0) FROM archives", [], |row| {
+            row.get(0)
+        })?;
 
     let uncompressed_size_of_blocks =
-        conn.query_row("SELECT SUM(length) FROM blocks", [], |row| row.get(0))?;
+        conn.query_row("SELECT IFNULL(SUM(length), 0) FROM blocks", [], |row| {
+            row.get(0)
+        })?;
 
     Ok((uncompressed_size_of_archives, uncompressed_size_of_blocks))
 }
