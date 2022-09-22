@@ -148,7 +148,6 @@ fn parse_opts() -> ArgMatches {
                 .arg(
                     Arg::new("target_dir")
                         .long("target-dir")
-                        .takes_value(true)
                         .value_parser(value_parser!(PathBuf)),
                 ),
         )
