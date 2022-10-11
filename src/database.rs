@@ -691,14 +691,14 @@ SELECT
 FROM (
     SELECT
         archives.id as id,
-        archives.b2_length as b2_length,
+        archives.length as length,
         SUM(blocks.length) as blocks_length
     FROM archives, blocks
     WHERE archives.id = blocks.archive_id
     GROUP BY archives.id
 )
 WHERE blocks_length < ?
-ORDER BY blocks_length ASC, b2_length DESC
+ORDER BY length - blocks_length DESC
 "#,
     )?;
 
