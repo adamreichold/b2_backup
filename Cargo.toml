@@ -12,7 +12,7 @@ blake3 = "1.0"
 chacha20poly1305 = "0.10"
 clap = { version = "4.0", default-features = false, features = ["std", "help", "usage", "cargo"] }
 hex = "0.4"
-nix = "0.25"
+nix = { version = "0.25", default-features = false, features = ["signal", "zerocopy"] }
 rayon = "1.2"
 ring = "0.16"
 rusqlite = { version = "0.28", features = ["bundled", "session"] }

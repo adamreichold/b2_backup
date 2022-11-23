@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::convert::TryInto;
 use std::env::set_current_dir;
 use std::fs::{create_dir_all, set_permissions, File, Metadata, OpenOptions, Permissions};
-use std::io::{copy, Read, Seek, SeekFrom, Write};
+use std::io::{copy, Read, Seek, Write};
 use std::mem::replace;
 use std::os::unix::fs::{symlink as create_symlink, FileExt, PermissionsExt};
 use std::path::Path;
@@ -101,7 +101,7 @@ impl Manifest {
 
             if !was_interrupted && update.archive_len != 0 {
                 let name = format!("archive_{}", update.archive_id);
-                update.blocks.seek(SeekFrom::Start(0))?;
+                update.blocks.rewind()?;
                 let (b2_file_id, b2_length) = client.upload(&name, &mut update.blocks)?;
 
                 update_archive(
@@ -562,7 +562,7 @@ pub fn store_block(
     };
 
     let name = format!("archive_{}", archive_id);
-    blocks.seek(SeekFrom::Start(0))?;
+    blocks.rewind()?;
     let (b2_file_id, b2_length) = client.upload(&name, &mut blocks)?;
 
     let update = update.lock().unwrap();
