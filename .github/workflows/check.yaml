@@ -6,20 +6,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v3
       with:
         fetch-depth: 1
-    - uses: actions-rs/toolchain@v1
+    - uses: dtolnay/rust-toolchain@nightly
       with:
-        profile: minimal
-        toolchain: nightly
         components: rustfmt, clippy
-        override: true
-    - uses: actions-rs/cargo@v1
-      with:
-        command: fmt
-        args: -- --check
-    - uses: actions-rs/clippy-check@v1
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        args: -- --deny warnings
+    - run: cargo fmt -- --check
+    - run: cargo clippy -- --deny warnings --allow clippy::uninlined-format-args

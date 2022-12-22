@@ -7,12 +7,12 @@ repository = "https://github.com/adamreichold/b2_backup"
 edition = "2021"
 
 [dependencies]
-base64 = "0.13"
+base64 = "0.20"
 blake3 = "1.0"
 chacha20poly1305 = "0.10"
 clap = { version = "4.0", default-features = false, features = ["std", "help", "usage", "cargo"] }
 hex = "0.4"
-nix = { version = "0.25", default-features = false, features = ["signal", "zerocopy"] }
+nix = { version = "0.26", default-features = false, features = ["signal", "zerocopy"] }
 rayon = "1.2"
 ring = "0.16"
 rusqlite = { version = "0.28", features = ["bundled", "session"] }
@@ -20,7 +20,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 tempfile = "3.1"
 zeptohttpc = { version = "0.5", features = ["tls", "json"] }
-zstd = { version = "0.11", default-features = false }
+zstd = { version = "0.12", default-features = false }
 
 [profile.release]
 opt-level = "s"
