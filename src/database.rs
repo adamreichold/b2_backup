@@ -31,7 +31,7 @@ use rusqlite::{
 
 use super::Fallible;
 
-pub fn open_connection(path: impl AsRef<Path>) -> Fallible<Connection> {
+pub fn open_connection(path: &Path) -> Fallible<Connection> {
     let conn = Connection::open(path)?;
 
     conn.execute_batch(

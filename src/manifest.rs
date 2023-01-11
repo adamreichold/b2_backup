@@ -51,7 +51,7 @@ use super::{
         update_archive, update_block, update_directory, update_file, update_new_file,
         update_patchset, update_symbolic_link,
     },
-    was_interrupted, Bytes, Config, Fallible,
+    ensure_restrictive_permissions, was_interrupted, Bytes, Config, Fallible,
 };
 
 pub struct Manifest {
@@ -59,10 +59,12 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    pub fn open(path: impl AsRef<Path>) -> Fallible<Self> {
-        Ok(Self {
-            conn: open_connection(path)?,
-        })
+    pub fn open(path: &Path) -> Fallible<Self> {
+        ensure_restrictive_permissions(path)?;
+
+        let conn = open_connection(path)?;
+
+        Ok(Self { conn })
     }
 
     pub fn update(

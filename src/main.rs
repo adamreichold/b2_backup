@@ -26,9 +26,10 @@ mod split;
 use std::convert::TryInto;
 use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FmtResult};
-use std::fs::File;
+use std::fs::{metadata, read_to_string, set_permissions, File};
 use std::io::{Error as IoError, ErrorKind as IoErrorKind};
-use std::os::unix::io::AsRawFd;
+use std::os::unix::{fs::PermissionsExt, io::AsRawFd};
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -44,7 +45,7 @@ use rayon::{
     ThreadPoolBuilder,
 };
 use serde::Deserialize;
-use serde_yaml::from_reader;
+use serde_yaml::from_str;
 
 use self::{backup::backup, client::Client, manifest::Manifest, pack::Key};
 
@@ -53,11 +54,11 @@ type Fallible<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 fn main() -> Fallible {
     let opts = parse_opts();
 
-    let config = Config::parse(get_path(&opts, "config").unwrap())?;
+    let config = Config::read(get_path(&opts, "config").unwrap())?;
 
     let client = Client::new(&config)?;
 
-    let mut manifest = Manifest::open("manifest.db")?;
+    let mut manifest = Manifest::open(get_path(&opts, "manifest").unwrap())?;
 
     match opts.subcommand() {
         None | Some(("backup", _)) => {
@@ -128,12 +129,32 @@ fn copy_file_range_full(from: &File, from_off: u64, to: &File, to_off: u64, len:
     Ok(())
 }
 
+fn ensure_restrictive_permissions(path: &Path) -> Fallible {
+    const MODE: u32 = 0o600;
+
+    let mut perm = metadata(path)?.permissions();
+
+    if perm.mode() != MODE {
+        perm.set_mode(MODE);
+
+        set_permissions(path, perm)?;
+    }
+
+    Ok(())
+}
+
 fn parse_opts() -> ArgMatches {
     command!()
         .arg(
             Arg::new("config")
                 .long("config")
                 .default_value("config.yaml")
+                .value_parser(value_parser!(PathBuf)),
+        )
+        .arg(
+            Arg::new("manifest")
+                .long("manifest")
+                .default_value("manifest.db")
                 .value_parser(value_parser!(PathBuf)),
         )
         .subcommand(Command::new("backup"))
@@ -181,8 +202,11 @@ pub struct Config {
 }
 
 impl Config {
-    fn parse(path: impl AsRef<Path>) -> Fallible<Self> {
-        let config = from_reader(File::open(path)?)?;
+    fn read(path: &Path) -> Fallible<Self> {
+        ensure_restrictive_permissions(path)?;
+
+        let config = from_str(&read_to_string(path)?)?;
+
         Ok(config)
     }
 
