@@ -61,7 +61,7 @@ fn main() -> Fallible {
     let mut manifest = Manifest::open(get_path(&opts, "manifest").unwrap())?;
 
     match opts.subcommand() {
-        None | Some(("backup", _)) => {
+        Some(("backup", args)) => {
             manifest.update(config.keep_deleted_files, &client, |update| {
                 install_interrupt_handler()?;
 
@@ -75,7 +75,14 @@ fn main() -> Fallible {
                     .includes
                     .par_iter()
                     .try_for_each(|path| backup(&config, &client, update, path))
-            })
+            })?;
+
+            if *args.get_one::<bool>("maybe_collect").unwrap() {
+                manifest.maybe_collect_small_archives(&config, &client)?;
+                manifest.maybe_collect_small_patchsets(&config, &client)?;
+            }
+
+            Ok(())
         }
         Some(("collect-small-archives", _)) => manifest.collect_small_archives(&config, &client),
         Some(("collect-small-patchsets", _)) => manifest.collect_small_patchsets(&config, &client),
@@ -87,7 +94,7 @@ fn main() -> Fallible {
         ),
         Some(("restore-manifest", _)) => manifest.restore_manifest(&client),
         Some(("purge-storage", _)) => manifest.purge_storage(&client),
-        Some(_) => unreachable!(),
+        None | Some(_) => unreachable!(),
     }
 }
 
@@ -157,7 +164,15 @@ fn parse_opts() -> ArgMatches {
                 .default_value("manifest.db")
                 .value_parser(value_parser!(PathBuf)),
         )
-        .subcommand(Command::new("backup"))
+        .subcommand_required(true)
+        .subcommand(
+            Command::new("backup").arg(
+                Arg::new("maybe_collect")
+                    .long("maybe-collect")
+                    .default_value("true")
+                    .value_parser(value_parser!(bool)),
+            ),
+        )
         .subcommand(Command::new("collect-small-archives"))
         .subcommand(Command::new("collect-small-patchsets"))
         .subcommand(
@@ -199,6 +214,10 @@ pub struct Config {
     min_archive_len: u64,
     #[serde(default = "Config::def_max_manifest_len")]
     max_manifest_len: u64,
+    #[serde(default = "Config::def_small_archives_limit")]
+    small_archives_limit: usize,
+    #[serde(default = "Config::def_small_patchsets_limit")]
+    small_patchsets_limit: usize,
 }
 
 impl Config {
@@ -230,6 +249,14 @@ impl Config {
 
     fn def_max_manifest_len() -> u64 {
         10_000_000
+    }
+
+    fn def_small_archives_limit() -> usize {
+        10
+    }
+
+    fn def_small_patchsets_limit() -> usize {
+        25
     }
 }
 
