@@ -1,0 +1,36 @@
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  binaries:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 1
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-unknown-linux-musl
+    - run: sudo apt-get install --yes musl-tools
+    - run: cargo build  --release --target=x86_64-unknown-linux-musl
+      env:
+        RUSTFLAGS: "-Ctarget-feature=+crt-static"
+
+    - uses: rickstaa/action-create-tag@v1
+      with:
+        tag: continuous
+        force_push_tag: true
+    - uses: ncipollo/release-action@v1
+      with:
+        allowUpdates: true
+        removeArtifacts: true
+        tag: continuous
+        name: Continuous build
+        body: Statically linked binaries built automatically from latest commit.
+        prerelease: true
+        artifacts: "target/x86_64-unknown-linux-musl/release/idrive_backup"
+        token: ${{ secrets.GITHUB_TOKEN }}
