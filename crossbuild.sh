@@ -18,6 +18,6 @@ export TARGET_CC="${TARGET_CC}"
 
 cd /src
 rustup target add ${TARGET}
-cargo build --no-default-features --release --target=${TARGET}
+cargo build --release --target=${TARGET}
 
 EOF

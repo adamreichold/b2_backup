@@ -23,6 +23,7 @@ use std::sync::Mutex;
 use std::thread::{current, sleep, ThreadId};
 use std::time::Duration;
 
+use base64::{engine::general_purpose::STANDARD, Engine};
 use ring::digest::{digest, SHA1_FOR_LEGACY_USE_ONLY};
 use serde::{Deserialize, Serialize};
 use zeptohttpc::{
@@ -54,7 +55,7 @@ impl<'a> Client<'a> {
                 AUTHORIZATION,
                 format!(
                     "Basic {}",
-                    base64::encode(format!("{}:{}", config.app_key_id, config.app_key))
+                    STANDARD.encode(format!("{}:{}", config.app_key_id, config.app_key))
                 ),
             )
             .empty()?

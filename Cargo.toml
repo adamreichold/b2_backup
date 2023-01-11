@@ -7,7 +7,7 @@ repository = "https://github.com/adamreichold/b2_backup"
 edition = "2021"
 
 [dependencies]
-base64 = "0.20"
+base64 = "0.21"
 blake3 = "1.0"
 chacha20poly1305 = "0.10"
 clap = { version = "4.0", default-features = false, features = ["std", "help", "usage", "cargo"] }
