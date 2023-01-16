@@ -204,6 +204,7 @@ pub struct Config {
     bucket_name: String,
     key: String,
     includes: Vec<PathBuf>,
+    #[serde(default)]
     excludes: Vec<PathBuf>,
     #[serde(default = "Config::def_keep_deleted_files")]
     keep_deleted_files: bool,
