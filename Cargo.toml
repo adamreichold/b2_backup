@@ -1,10 +1,12 @@
 [package]
 name = "b2_backup"
+description = "Incremental backups to Backblaze B2"
 version = "0.1.0"
 authors = ["Adam Reichold <adam.reichold@t-online.de>"]
 license = "GPL-3.0"
 repository = "https://github.com/adamreichold/b2_backup"
 edition = "2021"
+publish = false
 
 [dependencies]
 base64 = "0.21"
