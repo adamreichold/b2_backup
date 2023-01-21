@@ -158,7 +158,7 @@ impl Manifest {
     pub fn maybe_collect_small_archives(&mut self, config: &Config, client: &Client) -> Fallible {
         let small_archives = select_small_archives(&self.conn, config.min_archive_len)?;
 
-        if small_archives.len() > config.small_archives_limit {
+        while small_archives.len() > config.small_archives_limit {
             println!(
                 "There are {} small archives. Collection triggered...",
                 small_archives.len()
@@ -221,13 +221,13 @@ impl Manifest {
     pub fn maybe_collect_small_patchsets(&mut self, config: &Config, client: &Client) -> Fallible {
         let small_patchsets = select_small_patchsets(&self.conn, config.max_manifest_len)?;
 
-        if small_patchsets.len() > config.small_patchsets_limit {
+        while small_patchsets.len() > config.small_patchsets_limit {
             println!(
                 "There are {} small patchsets. Collection triggered...",
                 small_patchsets.len()
             );
 
-            self.collect_small_archives(config, client)?;
+            self.collect_small_patchsets(config, client)?;
         }
 
         Ok(())
