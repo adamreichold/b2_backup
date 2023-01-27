@@ -2,8 +2,11 @@
 Description=B2 backup service
 
 [Service]
-ExecStart=schedtool -D -n19 -e ionice -c3 %h/bin/b2_backup/b2_backup backup
+ExecStart=%h/bin/b2_backup/b2_backup backup
 WorkingDirectory=%h/bin/b2_backup
+Nice=19
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
 Restart=on-failure
 RestartSec=300
 KillMode=mixed
