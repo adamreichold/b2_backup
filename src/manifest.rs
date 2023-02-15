@@ -156,22 +156,25 @@ impl Manifest {
     }
 
     pub fn maybe_collect_small_archives(&mut self, config: &Config, client: &Client) -> Fallible {
-        loop {
-            let small_archives = select_small_archives(&self.conn, config.min_archive_len)?;
+        let mut small_archives = select_small_archives(&self.conn, config.min_archive_len)?.len();
 
-            if small_archives.len() <= config.small_archives_limit {
-                break;
-            }
-
-            println!(
-                "There are {} small archives. Collection triggered...",
-                small_archives.len()
-            );
-
-            self.collect_small_archives(config, client)?;
+        if small_archives <= config.small_archives_upper_limit
+            || config.small_archives_upper_limit == 0
+        {
+            return Ok(());
         }
 
-        Ok(())
+        loop {
+            println!("There are {small_archives} small archives. Collection triggered...",);
+
+            self.collect_small_archives(config, client)?;
+
+            small_archives = select_small_archives(&self.conn, config.min_archive_len)?.len();
+
+            if small_archives <= config.small_archives_lower_limit {
+                return Ok(());
+            }
+        }
     }
 
     pub fn collect_small_archives(&mut self, config: &Config, client: &Client) -> Fallible {
@@ -224,21 +227,18 @@ impl Manifest {
 
     pub fn maybe_collect_small_patchsets(&mut self, config: &Config, client: &Client) -> Fallible {
         loop {
-            let small_patchsets = select_small_patchsets(&self.conn, config.max_manifest_len)?;
+            let small_patchsets =
+                select_small_patchsets(&self.conn, config.max_manifest_len)?.len();
 
-            if small_patchsets.len() <= config.small_patchsets_limit {
-                break;
+            if small_patchsets <= config.small_patchsets_limit || config.small_patchsets_limit == 0
+            {
+                return Ok(());
             }
 
-            println!(
-                "There are {} small patchsets. Collection triggered...",
-                small_patchsets.len()
-            );
+            println!("There are {small_patchsets} small patchsets. Collection triggered...",);
 
             self.collect_small_patchsets(config, client)?;
         }
-
-        Ok(())
     }
 
     pub fn collect_small_patchsets(&mut self, config: &Config, client: &Client) -> Fallible {

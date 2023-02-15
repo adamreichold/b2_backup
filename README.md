@@ -37,9 +37,11 @@ compression_level: 17
 min_archive_len: 50_000_000
 # maximum resulting size when merging patchset files (optional)
 max_manifest_len: 10_000_000
-# threshold at which archives containing stale data are collected (optional)
-small_archives_limit: 10
-# threshold at which patchsets containing stale data are collected (optional)
+# threshold above which collecting archives containing stale data starts (zero deactivates mechanism, optional)
+small_archives_upper_limit: 10
+# threshold below which collecting archives containing stale data stops (optional)
+small_archives_lower_limit: 5
+# threshold at which patchsets containing stale data are collected (zero deactivates mechanism, optional)
 small_patchsets_limit: 25
 ```
 

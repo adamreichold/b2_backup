@@ -215,8 +215,10 @@ pub struct Config {
     min_archive_len: u64,
     #[serde(default = "Config::def_max_manifest_len")]
     max_manifest_len: u64,
-    #[serde(default = "Config::def_small_archives_limit")]
-    small_archives_limit: usize,
+    #[serde(default = "Config::def_small_archives_upper_limit")]
+    small_archives_upper_limit: usize,
+    #[serde(default = "Config::def_small_archives_lower_limit")]
+    small_archives_lower_limit: usize,
     #[serde(default = "Config::def_small_patchsets_limit")]
     small_patchsets_limit: usize,
 }
@@ -252,8 +254,12 @@ impl Config {
         10_000_000
     }
 
-    fn def_small_archives_limit() -> usize {
+    fn def_small_archives_upper_limit() -> usize {
         10
+    }
+
+    fn def_small_archives_lower_limit() -> usize {
+        5
     }
 
     fn def_small_patchsets_limit() -> usize {
