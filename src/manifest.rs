@@ -376,6 +376,8 @@ impl Manifest {
             Ok(())
         })?;
 
+        let mut buf = Vec::new();
+
         select_archives_by_path(&trans, path_filter, |archive_id| {
             let name = format!("archive_{}", archive_id);
             let mut archive = tempfile()?;
@@ -392,7 +394,7 @@ impl Manifest {
                     file_id,
                     Some(archive_id),
                     |length, _archive_id, archive_off, offset| {
-                        copy_file_range_full(&archive, archive_off, &file, offset, length)
+                        copy_file_range_full(&mut buf, &archive, archive_off, &file, offset, length)
                     },
                 )
             })
