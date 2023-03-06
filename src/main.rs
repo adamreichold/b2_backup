@@ -27,7 +27,7 @@ use std::convert::TryInto;
 use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::fs::{metadata, read_to_string, set_permissions, File};
-use std::io::{Error as IoError, ErrorKind as IoErrorKind};
+use std::io::{Error as IoError, ErrorKind as IoErrorKind, Write};
 use std::os::unix::{
     fs::{FileExt, PermissionsExt},
     io::AsRawFd,
@@ -123,26 +123,29 @@ fn copy_file_range_full(
     buf: &mut Vec<u8>,
     from: &File,
     from_off: u64,
-    to: &File,
-    to_off: u64,
+    to: &mut File,
+    to_off: Option<u64>,
     len: u64,
 ) -> Fallible {
     let from_fd = from.as_raw_fd();
     let to_fd = to.as_raw_fd();
 
     let mut from_pos = from_off.try_into().unwrap();
-    let mut to_pos = to_off.try_into().unwrap();
+    let mut to_pos = to_off.map(|off| off.try_into().unwrap());
     let mut len = len.try_into().unwrap();
 
     while len != 0 {
-        match copy_file_range(from_fd, Some(&mut from_pos), to_fd, Some(&mut to_pos), len) {
+        match copy_file_range(from_fd, Some(&mut from_pos), to_fd, to_pos.as_mut(), len) {
             Ok(0) => return Err(IoError::from(IoErrorKind::WriteZero).into()),
             Ok(written) => len -= written,
             Err(Errno::EINTR) => (),
             Err(Errno::EXDEV) => {
                 buf.resize(len, 0);
                 from.read_exact_at(buf, from_off)?;
-                to.write_all_at(buf, to_off)?;
+                match to_off {
+                    Some(off) => to.write_all_at(buf, off)?,
+                    None => to.write_all(buf)?,
+                }
                 break;
             }
             Err(err) => return Err(err.into()),

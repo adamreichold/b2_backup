@@ -22,7 +22,7 @@ use std::env::set_current_dir;
 use std::fs::{create_dir_all, set_permissions, File, Metadata, OpenOptions, Permissions};
 use std::io::{copy, Read, Seek, Write};
 use std::mem::replace;
-use std::os::unix::fs::{symlink as create_symlink, FileExt, PermissionsExt};
+use std::os::unix::fs::{symlink as create_symlink, PermissionsExt};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -197,9 +197,14 @@ impl Manifest {
                 let blocks = select_blocks_by_archive(update.conn, *archive_id)?;
 
                 for (block_id, stored_digest, length, archive_off) in blocks {
-                    buffer.resize(length as _, 0);
-                    archive.read_exact_at(&mut buffer, archive_off)?;
-                    update.blocks.write_all(&buffer)?;
+                    copy_file_range_full(
+                        &mut buffer,
+                        &archive,
+                        archive_off,
+                        &mut update.blocks,
+                        None,
+                        length,
+                    )?;
 
                     let digest = hash(&buffer);
                     if digest != stored_digest {
@@ -376,7 +381,7 @@ impl Manifest {
             Ok(())
         })?;
 
-        let mut buf = Vec::new();
+        let mut buffer = Vec::new();
 
         select_archives_by_path(&trans, path_filter, |archive_id| {
             let name = format!("archive_{}", archive_id);
@@ -387,14 +392,21 @@ impl Manifest {
                 println!("Restoring {}...", path.display());
 
                 let path = path.strip_prefix("/")?;
-                let file = OpenOptions::new().write(true).open(path)?;
+                let mut file = OpenOptions::new().write(true).open(path)?;
 
                 select_blocks_by_file(
                     &trans,
                     file_id,
                     Some(archive_id),
                     |length, _archive_id, archive_off, offset| {
-                        copy_file_range_full(&mut buf, &archive, archive_off, &file, offset, length)
+                        copy_file_range_full(
+                            &mut buffer,
+                            &archive,
+                            archive_off,
+                            &mut file,
+                            Some(offset),
+                            length,
+                        )
                     },
                 )
             })
