@@ -16,6 +16,8 @@ export CARGO_TARGET_DIR="target-crossbuild-${ARCH}"
 export RUSTFLAGS="-Clinker=${TARGET_CC} -Ctarget-cpu=${TARGET_CPU}"
 export TARGET_CC="${TARGET_CC}"
 
+export CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
+
 cd /src
 rustup target add ${TARGET}
 cargo build --release --target=${TARGET}
