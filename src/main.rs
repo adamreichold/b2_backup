@@ -28,10 +28,7 @@ use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::fs::{metadata, read_to_string, set_permissions, File};
 use std::io::{Error as IoError, ErrorKind as IoErrorKind};
-use std::os::unix::{
-    fs::{FileExt, PermissionsExt},
-    io::AsRawFd,
-};
+use std::os::unix::fs::{FileExt, PermissionsExt};
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -127,15 +124,12 @@ fn copy_file_range_full(
     to_off: u64,
     len: u64,
 ) -> Fallible {
-    let from_fd = from.as_raw_fd();
-    let to_fd = to.as_raw_fd();
-
     let mut from_pos = from_off.try_into().unwrap();
     let mut to_pos = to_off.try_into().unwrap();
     let mut len = len.try_into().unwrap();
 
     while len != 0 {
-        match copy_file_range(from_fd, Some(&mut from_pos), to_fd, Some(&mut to_pos), len) {
+        match copy_file_range(from, Some(&mut from_pos), to, Some(&mut to_pos), len) {
             Ok(0) => return Err(IoError::from(IoErrorKind::WriteZero).into()),
             Ok(written) => len -= written,
             Err(Errno::EINTR) => (),
