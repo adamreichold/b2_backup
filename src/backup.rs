@@ -16,7 +16,6 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with b2_backup.  If not, see <https://www.gnu.org/licenses/>.
 */
-use std::convert::TryFrom;
 use std::fs::{File, Metadata};
 use std::io::ErrorKind;
 use std::path::Path;

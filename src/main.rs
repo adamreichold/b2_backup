@@ -23,7 +23,6 @@ mod manifest;
 mod pack;
 mod split;
 
-use std::convert::TryInto;
 use std::error::Error;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::fs::{metadata, read_to_string, set_permissions, File};

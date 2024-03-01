@@ -17,7 +17,6 @@ You should have received a copy of the GNU General Public License
 along with b2_backup.  If not, see <https://www.gnu.org/licenses/>.
 */
 use std::collections::{BTreeMap, HashSet};
-use std::convert::TryInto;
 use std::env::set_current_dir;
 use std::fs::{create_dir_all, set_permissions, File, Metadata, OpenOptions, Permissions};
 use std::io::{copy, Read, Seek, Write};

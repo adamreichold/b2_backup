@@ -17,7 +17,6 @@ You should have received a copy of the GNU General Public License
 along with b2_backup.  If not, see <https://www.gnu.org/licenses/>.
 */
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::io::Read;
 use std::sync::Mutex;
 use std::thread::{current, sleep, ThreadId};
