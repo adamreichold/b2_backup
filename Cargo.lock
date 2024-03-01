@@ -87,6 +87,7 @@ dependencies = [
 name = "b2_backup"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-sys",
  "base64",
  "blake3",
  "chacha20poly1305",

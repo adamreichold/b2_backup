@@ -6,11 +6,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         fetch-depth: 1
     - uses: dtolnay/rust-toolchain@nightly
       with:
         components: rustfmt, clippy
     - run: cargo fmt -- --check
-    - run: cargo clippy -- --deny warnings --allow clippy::uninlined-format-args
+    - run: cargo clippy -- --deny warnings

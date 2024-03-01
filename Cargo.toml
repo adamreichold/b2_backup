@@ -9,6 +9,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+aws-lc-sys = { version = "0.13", features = ["bindgen"] }
 base64 = "0.21"
 blake3 = "1.0"
 chacha20poly1305 = "0.10"
