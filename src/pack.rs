@@ -18,6 +18,7 @@ along with b2_backup.  If not, see <https://www.gnu.org/licenses/>.
 */
 use std::io::{Cursor, Read};
 
+use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use chacha20poly1305::{
     aead::{
         generic_array::{typenum::Unsigned, GenericArray},
@@ -25,7 +26,6 @@ use chacha20poly1305::{
     },
     XChaCha20Poly1305,
 };
-use ring::rand::{SecureRandom, SystemRandom};
 use zstd::{encode_all, Decoder};
 
 use super::Fallible;

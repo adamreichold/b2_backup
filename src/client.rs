@@ -22,8 +22,8 @@ use std::sync::Mutex;
 use std::thread::{current, sleep, ThreadId};
 use std::time::Duration;
 
+use aws_lc_rs::digest::{digest, SHA1_FOR_LEGACY_USE_ONLY};
 use base64::{engine::general_purpose::STANDARD, Engine};
-use ring::digest::{digest, SHA1_FOR_LEGACY_USE_ONLY};
 use serde::{Deserialize, Serialize};
 use zeptohttpc::{
     http::{

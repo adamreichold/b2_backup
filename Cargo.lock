@@ -66,6 +66,7 @@ dependencies = [
  "aws-lc-sys",
  "mirai-annotations",
  "paste",
+ "untrusted 0.7.1",
  "zeroize",
 ]
 
@@ -87,6 +88,7 @@ dependencies = [
 name = "b2_backup"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-rs",
  "aws-lc-sys",
  "base64",
  "blake3",
@@ -95,7 +97,6 @@ dependencies = [
  "hex",
  "nix",
  "rayon",
- "ring",
  "rusqlite",
  "serde",
  "serde_yaml",
@@ -741,7 +742,7 @@ dependencies = [
  "getrandom",
  "libc",
  "spin",
- "untrusted",
+ "untrusted 0.9.0",
  "windows-sys",
 ]
 
@@ -831,7 +832,7 @@ dependencies = [
  "aws-lc-rs",
  "ring",
  "rustls-pki-types",
- "untrusted",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -990,6 +991,12 @@ name = "unsafe-libyaml"
 version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab4c90930b95a82d00dc9e9ac071b4991924390d46cbd0dfe566148667605e4b"
+
+[[package]]
+name = "untrusted"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
 name = "untrusted"
