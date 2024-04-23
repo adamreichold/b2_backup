@@ -10,8 +10,8 @@ publish = false
 
 [dependencies]
 aws-lc-rs = { version = "1.0" }
-aws-lc-sys = { version = "0.13", features = ["bindgen"] }
-base64 = "0.21"
+aws-lc-sys = { version = "0.15", features = ["bindgen"] }
+base64 = "0.22"
 blake3 = "1.0"
 chacha20poly1305 = "0.10"
 clap = { version = "4.0", default-features = false, features = ["std", "help", "usage", "cargo"] }
