@@ -37,6 +37,9 @@ type Tag = GenericArray<u8, <XChaCha20Poly1305 as AeadCore>::TagSize>;
 
 const NONCE_LEN: usize = <XChaCha20Poly1305 as AeadCore>::NonceSize::USIZE;
 const TAG_LEN: usize = <XChaCha20Poly1305 as AeadCore>::TagSize::USIZE;
+const TRAILER_LEN: usize = NONCE_LEN + TAG_LEN + 1;
+
+const VERSION: u8 = 0;
 
 pub fn pack(key: &Key, compression_level: i32, name: &str, reader: impl Read) -> Fallible<Vec<u8>> {
     let mut buf = encode_all(reader, compression_level)?;
@@ -50,16 +53,22 @@ pub fn pack(key: &Key, compression_level: i32, name: &str, reader: impl Read) ->
         .encrypt_in_place_detached(&nonce, name.as_bytes(), &mut buf)
         .map_err(|_| "Failed to encrypt buffer")?;
 
-    buf.reserve(NONCE_LEN + TAG_LEN);
+    buf.reserve(TRAILER_LEN);
     buf.extend_from_slice(&nonce);
     buf.extend_from_slice(&tag);
+    buf.push(VERSION);
 
     Ok(buf)
 }
 
 pub fn unpack(key: &Key, name: &str, mut buf: Vec<u8>) -> Fallible<impl Read> {
-    if buf.len() < TAG_LEN + NONCE_LEN {
+    if buf.len() < TRAILER_LEN {
         return Err("Buffer too short".into());
+    }
+
+    let version = buf.pop().unwrap();
+    if version != VERSION {
+        return Err(format!("Unsupported pack version {}", version).into());
     }
 
     let tag = Tag::clone_from_slice(&buf[buf.len() - TAG_LEN..]);
