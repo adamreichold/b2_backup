@@ -94,7 +94,7 @@ impl<'a> Client<'a> {
     pub fn download(&self, name: &str) -> Fallible<impl Read> {
         println!("Downloading {}...", name);
 
-        let resp = Request::get(&format!(
+        let resp = Request::get(format!(
             "{}/file/{}/{}",
             self.download_url, self.config.bucket_name, name
         ))
@@ -125,7 +125,7 @@ impl<'a> Client<'a> {
             id: &'a str,
         }
 
-        let resp = Request::post(&format!("{}/b2api/v2/b2_delete_file_version", self.api_url))
+        let resp = Request::post(format!("{}/b2api/v2/b2_delete_file_version", self.api_url))
             .header(AUTHORIZATION, &self.token)
             .json_buffered(&Body { name, id })?
             .send()?;
@@ -158,7 +158,7 @@ impl<'a> Client<'a> {
                 count: i32,
             }
 
-            let resp = Request::post(&format!("{}/b2api/v2/b2_list_file_names", self.api_url))
+            let resp = Request::post(format!("{}/b2api/v2/b2_list_file_names", self.api_url))
                 .header(AUTHORIZATION, &self.token)
                 .json_buffered(&Body {
                     bucket_id: &self.config.bucket_id,
@@ -254,7 +254,7 @@ impl<'a> Client<'a> {
             bucket_id: &'a str,
         }
 
-        let resp = Request::post(&format!("{}/b2api/v2/b2_get_upload_url", self.api_url))
+        let resp = Request::post(format!("{}/b2api/v2/b2_get_upload_url", self.api_url))
             .header(AUTHORIZATION, &self.token)
             .json_buffered(&Body {
                 bucket_id: &self.config.bucket_id,
