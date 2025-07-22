@@ -92,7 +92,7 @@ impl<'a> Client<'a> {
     }
 
     pub fn download(&self, name: &str) -> Fallible<impl Read> {
-        println!("Downloading {}...", name);
+        println!("Downloading {name}...");
 
         let resp = Request::get(format!(
             "{}/file/{}/{}",
@@ -115,7 +115,7 @@ impl<'a> Client<'a> {
     }
 
     pub fn remove(&self, name: &str, id: &str) -> Fallible {
-        println!("Removing {}...", name);
+        println!("Removing {name}...");
 
         #[derive(Serialize)]
         struct Body<'a> {
@@ -238,7 +238,7 @@ impl<'a> Client<'a> {
                         return Err(err);
                     }
 
-                    eprintln!("Retrying failed upload of {}: {}", name, err);
+                    eprintln!("Retrying failed upload of {name}: {err}");
                 }
             }
 

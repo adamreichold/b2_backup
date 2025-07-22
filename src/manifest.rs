@@ -18,6 +18,7 @@ along with b2_backup.  If not, see <https://www.gnu.org/licenses/>.
 */
 use std::collections::{BTreeMap, HashSet};
 use std::env::set_current_dir;
+use std::ffi::CStr;
 use std::fs::{create_dir_all, set_permissions, File, Metadata, OpenOptions, Permissions};
 use std::io::{copy, Read, Seek, Write};
 use std::mem::replace;
@@ -83,7 +84,7 @@ impl Manifest {
 
         {
             let mut session = Session::new(&trans)?;
-            session.attach(None)?;
+            session.attach::<&CStr>(None)?;
 
             let archive_id = insert_def_archive(&trans)?;
 
@@ -140,7 +141,7 @@ impl Manifest {
         trans.commit()?;
 
         for (archive_id, b2_file_id) in unused_archives {
-            let name = format!("archive_{}", archive_id);
+            let name = format!("archive_{archive_id}");
             client.remove(&name, &b2_file_id)?;
         }
 
@@ -189,7 +190,7 @@ impl Manifest {
             let mut buffer = Vec::new();
 
             for archive_id in &small_archives {
-                let name = format!("archive_{}", archive_id);
+                let name = format!("archive_{archive_id}");
                 let mut archive = tempfile()?;
                 copy(&mut client.download(&name)?, &mut archive)?;
 
@@ -254,7 +255,7 @@ impl Manifest {
         let mut changegroup = Changegroup::new()?;
 
         for (patchset_id, _) in small_patchsets.iter().rev() {
-            let name = format!("manifest_{}", patchset_id);
+            let name = format!("manifest_{patchset_id}");
             let mut patchset = client.download(&name)?;
 
             changegroup.add_stream(&mut patchset)?;
@@ -272,7 +273,7 @@ impl Manifest {
         trans.commit()?;
 
         for (patchset_id, b2_file_id) in &small_patchsets {
-            let name = format!("manifest_{}", patchset_id);
+            let name = format!("manifest_{patchset_id}");
             client.remove(&name, b2_file_id)?;
         }
 
@@ -378,7 +379,7 @@ impl Manifest {
         let mut buf = Vec::new();
 
         select_archives_by_path(&trans, path_filter, |archive_id| {
-            let name = format!("archive_{}", archive_id);
+            let name = format!("archive_{archive_id}");
             let mut archive = tempfile()?;
             copy(&mut client.download(&name)?, &mut archive)?;
 
@@ -447,7 +448,7 @@ impl Manifest {
             .collect::<Fallible<BTreeMap<_, _>>>()?;
 
         for (patchset_id, (name, b2_file_id, b2_length)) in patchsets {
-            println!("Applying patchset {}...", patchset_id);
+            println!("Applying patchset {patchset_id}...");
             apply_patchset(
                 &trans,
                 client.download(&name)?,
@@ -602,7 +603,7 @@ pub fn store_block(
         blocks = replace(&mut update.blocks, tempfile()?);
     };
 
-    let name = format!("archive_{}", archive_id);
+    let name = format!("archive_{archive_id}");
     blocks.rewind()?;
     let (b2_file_id, b2_length) = client.upload(&name, &mut blocks)?;
 
@@ -617,7 +618,7 @@ pub fn store_block(
 fn upload_patchset(conn: &Connection, client: &Client, patchset: impl Read) -> Fallible {
     let patchset_id = insert_def_patchset(conn)?;
 
-    let name = format!("manifest_{}", patchset_id);
+    let name = format!("manifest_{patchset_id}");
     let (b2_file_id, b2_length) = client.upload(&name, patchset)?;
 
     update_patchset(conn, patchset_id, &b2_file_id, b2_length)?;
@@ -655,13 +656,12 @@ fn delete_unused_archives(
         let deleted_dirs = delete_unvisited_directories(conn)?;
         let deleted_symlinks = delete_unvisited_symbolic_links(conn)?;
         println!(
-            "Deleted {} unvisited files, {} unvisted directories and {} unvisited symbolic links",
-            deleted_files, deleted_dirs, deleted_symlinks
+            "Deleted {deleted_files} unvisited files, {deleted_dirs} unvisted directories and {deleted_symlinks} unvisited symbolic links"
         );
     }
 
     let deleted_blocks = delete_unused_blocks(conn)?;
-    println!("Deleted {} unmapped blocks", deleted_blocks);
+    println!("Deleted {deleted_blocks} unmapped blocks");
 
     let unused_archives = select_unused_archives(conn)?;
 

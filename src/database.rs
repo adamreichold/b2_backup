@@ -283,7 +283,7 @@ pub fn update_file(conn: &Connection, file_id: i64, new_file_id: i64) -> Fallibl
     let mut rows = stmt.query(params![new_file_id])?;
     let row = rows
         .next()?
-        .ok_or_else(|| format!("Invalid new file ID {}", new_file_id))?;
+        .ok_or_else(|| format!("Invalid new file ID {new_file_id}"))?;
 
     let size = row.get_ref_unwrap(0).as_i64()?;
     let mode = row.get_ref_unwrap(1).as_i64()?;
@@ -797,7 +797,7 @@ pub fn select_uncompressed_size(conn: &Connection) -> Fallible<(i64, i64)> {
     Ok((uncompressed_size_of_archives, uncompressed_size_of_blocks))
 }
 
-fn path_from_blob(value: ValueRef) -> Result<&Path, FromSqlError> {
+fn path_from_blob(value: ValueRef<'_>) -> Result<&Path, FromSqlError> {
     value
         .as_blob()
         .map(|blob| Path::new(OsStr::from_bytes(blob)))

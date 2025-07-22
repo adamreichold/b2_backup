@@ -292,6 +292,6 @@ impl Display for Bytes {
             unit = next_unit;
         }
 
-        write!(fmt, "{:.1} {}", factor, unit)
+        write!(fmt, "{factor:.1} {unit}")
     }
 }
