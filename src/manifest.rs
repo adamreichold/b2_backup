@@ -60,9 +60,9 @@ pub struct Manifest {
 
 impl Manifest {
     pub fn open(path: &Path) -> Fallible<Self> {
-        ensure_restrictive_permissions(path)?;
-
         let conn = open_connection(path)?;
+
+        ensure_restrictive_permissions(path)?;
 
         Ok(Self { conn })
     }
