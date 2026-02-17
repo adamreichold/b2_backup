@@ -1,3 +1,7 @@
+This repository was moved to <https://codeberg.org/adamreichold/b2_backup>.
+
+---
+
 # b2_backup
 
 This program can be used to perform incremental backups of a given set of files and directories targeting [Backblaze B2](https://www.backblaze.com/b2/cloud-storage.html) for storage. It uses the [bup](https://bup.github.io) block splitting algorithm and keeps a local manifest in an [SQLite](https://www.sqlite.org) database. It uses [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) for block addressing, [Zstd](https://github.com/facebook/zstd) for compression and the extended nonce variant of [ChaCha20-Poly1305](https://en.wikipedia.org/wiki/ChaCha20-Poly1305) for authenticated encryption.
