@@ -35,8 +35,12 @@ pub type Key = GenericArray<u8, <XChaCha20Poly1305 as KeySizeUser>::KeySize>;
 type Nonce = GenericArray<u8, <XChaCha20Poly1305 as AeadCore>::NonceSize>;
 type Tag = GenericArray<u8, <XChaCha20Poly1305 as AeadCore>::TagSize>;
 
+type Magic = [u8; 3];
+const MAGIC: Magic = [0, 0xB2, 0xBA];
+
 const NONCE_LEN: usize = <XChaCha20Poly1305 as AeadCore>::NonceSize::USIZE;
 const TAG_LEN: usize = <XChaCha20Poly1305 as AeadCore>::TagSize::USIZE;
+const TRAILER_LEN: usize = NONCE_LEN + TAG_LEN + MAGIC.len();
 
 pub fn pack(key: &Key, compression_level: i32, name: &str, reader: impl Read) -> Fallible<Vec<u8>> {
     let mut buf = encode_all(reader, compression_level)?;
@@ -50,16 +54,24 @@ pub fn pack(key: &Key, compression_level: i32, name: &str, reader: impl Read) ->
         .encrypt_in_place_detached(&nonce, name.as_bytes(), &mut buf)
         .map_err(|_| "Failed to encrypt buffer")?;
 
-    buf.reserve(NONCE_LEN + TAG_LEN);
+    buf.reserve(TRAILER_LEN);
     buf.extend_from_slice(&nonce);
     buf.extend_from_slice(&tag);
+    buf.extend_from_slice(&MAGIC);
 
     Ok(buf)
 }
 
 pub fn unpack(key: &Key, name: &str, mut buf: Vec<u8>) -> Fallible<impl Read> {
-    if buf.len() < TAG_LEN + NONCE_LEN {
+    if buf.len() < TRAILER_LEN {
         return Err("Buffer too short".into());
+    }
+
+    let magic = Magic::try_from(&buf[buf.len() - MAGIC.len()..]).unwrap();
+    buf.truncate(buf.len() - MAGIC.len());
+
+    if magic != MAGIC {
+        return Err(format!("Unsupported pack version {}", magic[0]).into());
     }
 
     let tag = Tag::clone_from_slice(&buf[buf.len() - TAG_LEN..]);
